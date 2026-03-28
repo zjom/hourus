@@ -1,8 +1,8 @@
 use chrono::{NaiveDateTime, TimeDelta};
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::str::FromStr;
-
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -29,7 +29,7 @@ pub enum ParseError {
     Unknown,
 }
 
-#[derive(PartialEq)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 enum EntryKind {
     Start,
     End,
@@ -46,6 +46,7 @@ impl FromStr for EntryKind {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 struct EntryLine {
     kind: EntryKind,
     desc: String,
@@ -67,7 +68,7 @@ impl FromStr for EntryLine {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Entry {
     desc: String,
     start: NaiveDateTime,
