@@ -57,6 +57,8 @@ impl FromStr for EntryLine {
         }
         let kind: EntryKind = data[0].parse()?;
         let dt_str = data[1].trim();
+        // TODO this is very hacky.
+        // Should probably pass in format specifier from user config
         let dt: NaiveDateTime = NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
             .or_else(|_| NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S"))?;
         let desc = data[2].trim().to_lowercase().to_owned();
