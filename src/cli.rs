@@ -39,7 +39,6 @@ pub enum Commands {
     /// specified. Does not respect --from and --to flags.
     Start {
         /// Description of the entry
-        #[arg(short)]
         desc: String,
     },
     /// Ends current session. Fails if no session is ongoing.
