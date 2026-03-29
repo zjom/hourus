@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::NaiveDate;
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
 use clap::{Parser, Subcommand};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -11,7 +11,7 @@ use crate::report::Report;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Path to .hours file
+    /// Path to .hours file.
     #[arg(short, long)]
     pub path: Option<String>,
 
@@ -28,25 +28,38 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Prints breakdown of hours by task
-    Breakdown,
-    /// Appends new session to file, ending current if exists. Outputs to stdout if no path
-    /// specified
+    Breakdown {
+        #[arg(short, long)]
+        from: Option<NaiveDate>,
+
+        #[arg(short, long)]
+        to: Option<NaiveDate>,
+    },
+    /// Appends new session to file, ending current if exists.
+    /// specified. Does not respect --from and --to flags.
     Start {
         /// Description of the entry
         #[arg(short)]
         desc: String,
     },
     /// Ends current session. Fails if no session is ongoing.
+    /// Does not respect --from and --to flags.
     End {},
 }
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let reader = get_file_reader(cli.path.as_deref())?;
-    let report = Report::from_reader(reader)?;
-
+    let report_builder = Report::new().with_reader(reader);
     match &cli.command {
-        Some(Commands::Breakdown) => {
+        Some(Commands::Breakdown { from, to }) => {
+            let from = from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
+            let to = to
+                .unwrap_or(Local::now().date_naive())
+                .and_time(NaiveTime::MIN);
+
+            let report = report_builder.from(from).to(to).build()?;
+
             let summary = report.summarize();
             for (desc, dur) in &summary {
                 println!("{desc}: {}h {}m", dur.num_hours(), dur.num_minutes() % 60);
@@ -60,6 +73,7 @@ pub fn run() -> Result<()> {
             );
         }
         Some(Commands::Start { desc }) => {
+            let report = report_builder.build()?;
             let now = chrono::Local::now().naive_local();
             let mut writer = get_file_writer(cli.path.as_deref())?;
             let entries = report.build_start_entries(desc, now)?;
@@ -68,12 +82,20 @@ pub fn run() -> Result<()> {
             }
         }
         Some(Commands::End {}) => {
+            let report = report_builder.build()?;
             let now = chrono::Local::now().naive_local();
             let mut writer = get_file_writer(cli.path.as_deref())?;
             let entry = report.build_end_entry(now)?;
             write!(writer, "\n{entry}")?;
         }
         None => {
+            let from = cli.from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
+            let to = cli
+                .to
+                .unwrap_or(Local::now().date_naive())
+                .and_time(NaiveTime::MIN);
+            let report = report_builder.from(from).to(to).build()?;
+
             let total = report.total_duration();
             println!(
                 "Total: {}h {}m",

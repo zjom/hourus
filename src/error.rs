@@ -22,4 +22,7 @@ pub enum ParseError {
 
     #[error("io error")]
     IOError(#[from] io::Error),
+
+    #[error("no report source specified")]
+    NoReportSource,
 }

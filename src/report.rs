@@ -15,20 +15,8 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn new(entry_lines: Vec<EntryLine>) -> Result<Self, ParseError> {
-        let entries = Report::make_entries_map(&entry_lines)?;
-        Ok(Report {
-            entries,
-            entry_lines,
-        })
-    }
-
-    pub fn from_reader(reader: Box<dyn Read>) -> Result<Self, ParseError> {
-        let entry_lines: Vec<EntryLine> = BufReader::new(reader)
-            .lines()
-            .map(|r| EntryLine::from_str(&r?))
-            .collect::<Result<_, _>>()?;
-        Report::new(entry_lines)
+    pub fn new() -> ReportBuilder {
+        ReportBuilder::new()
     }
 
     pub fn build_end_entry(&self, now: NaiveDateTime) -> Result<EntryLine> {
@@ -97,6 +85,85 @@ impl Report {
             .flat_map(|v| v.iter().map(Interval::duration))
             .sum()
     }
+}
+
+pub struct ReportBuilder {
+    source: Option<ReportSource>,
+    from: Option<NaiveDateTime>,
+    to: Option<NaiveDateTime>,
+}
+
+pub enum ReportSource {
+    Lines(Vec<EntryLine>),
+    Reader(Box<dyn Read>),
+}
+
+impl ReportBuilder {
+    // 1. Standard constructor
+    pub fn new() -> Self {
+        ReportBuilder {
+            source: None,
+            from: None,
+            to: None,
+        }
+    }
+
+    // 2. Chainable method accepting the ReportSource enum directly
+    pub fn from_source(mut self, source: ReportSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    // (Optional but recommended) Chainable helper for lines
+    pub fn with_lines(mut self, lines: impl IntoIterator<Item = EntryLine>) -> Self {
+        self.source = Some(ReportSource::Lines(lines.into_iter().collect()));
+        self
+    }
+
+    // (Optional but recommended) Chainable helper for a reader
+    pub fn with_reader(mut self, reader: Box<dyn Read>) -> Self {
+        self.source = Some(ReportSource::Reader(reader));
+        self
+    }
+
+    // 3. These were already chainable!
+    pub fn from(mut self, dt: NaiveDateTime) -> Self {
+        self.from = Some(dt);
+        self
+    }
+
+    pub fn to(mut self, dt: NaiveDateTime) -> Self {
+        self.to = Some(dt);
+        self
+    }
+
+    // 4. Build consumes the builder
+    pub fn build(self) -> Result<Report, ParseError> {
+        let source = self.source.ok_or(ParseError::NoReportSource)?;
+
+        let entry_lines: Vec<EntryLine> = match source {
+            ReportSource::Lines(lines) => lines,
+            ReportSource::Reader(reader) => BufReader::new(reader)
+                .lines()
+                .map(|r| EntryLine::from_str(&r?))
+                .collect::<Result<_, _>>()?,
+        };
+
+        let entry_lines: Vec<EntryLine> = entry_lines
+            .into_iter()
+            .filter(|el| {
+                self.from.map_or(true, |from| el.dt >= from)
+                    && self.to.map_or(true, |to| el.dt <= to)
+            })
+            .collect();
+
+        let entries = Self::make_entries_map(&entry_lines)?;
+
+        Ok(Report {
+            entries,
+            entry_lines,
+        })
+    }
 
     fn make_entries_map(
         entry_lines: &Vec<EntryLine>,
@@ -112,6 +179,13 @@ impl Report {
     }
 }
 
+// You can optionally implement Default since new() takes no arguments and sets None
+impl Default for ReportBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FromStr for Report {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -120,7 +194,7 @@ impl FromStr for Report {
             .map(EntryLine::from_str)
             .collect::<Result<_, _>>()?;
 
-        let entries = Report::make_entries_map(&entry_lines)?;
+        let entries = ReportBuilder::make_entries_map(&entry_lines)?;
 
         Ok(Report {
             entry_lines,
