@@ -38,7 +38,13 @@ pub struct EntryLine {
 
 impl fmt::Display for EntryLine {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} - {} - {}", self.kind, self.dt, self.desc)
+        write!(
+            f,
+            "{} - {} - {}",
+            self.kind,
+            self.dt.format("%Y-%m-%d %H:%M:%S"),
+            self.desc
+        )
     }
 }
 
@@ -50,7 +56,9 @@ impl FromStr for EntryLine {
             return Err(ParseError::Malformatted);
         }
         let kind: EntryKind = data[0].parse()?;
-        let dt: NaiveDateTime = NaiveDateTime::parse_from_str(data[1].trim(), "%Y-%m-%d %H:%M:%S")?;
+        let dt_str = data[1].trim();
+        let dt: NaiveDateTime = NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S"))?;
         let desc = data[2].trim().to_lowercase().to_owned();
 
         Ok(EntryLine { kind, desc, dt })
@@ -179,12 +187,19 @@ mod tests {
 
     #[test]
     fn entry_line_display_should_format_correctly() {
-        assert_eq!(format!("{}", start_line()), "START - 2015-09-05 23:56:04 - desc");
+        assert_eq!(
+            format!("{}", start_line()),
+            "START - 2015-09-05 23:56:04 - desc"
+        );
     }
 
     #[test]
     fn entry_line_display_end_kind() {
-        let e = EntryLine { kind: EntryKind::End, desc: "task".to_string(), dt: base_dt() };
+        let e = EntryLine {
+            kind: EntryKind::End,
+            desc: "task".to_string(),
+            dt: base_dt(),
+        };
         assert_eq!(format!("{}", e), "END - 2015-09-05 23:56:04 - task");
     }
 
@@ -224,7 +239,9 @@ mod tests {
     #[test]
     fn entry_line_from_str_should_err_missing_desc() {
         assert!(matches!(
-            "START - 2015-09-05 23:56:04".parse::<EntryLine>().unwrap_err(),
+            "START - 2015-09-05 23:56:04"
+                .parse::<EntryLine>()
+                .unwrap_err(),
             ParseError::Malformatted
         ));
     }
@@ -240,7 +257,9 @@ mod tests {
     #[test]
     fn entry_line_from_str_should_err_invalid_kind() {
         assert!(matches!(
-            "PAUSE - 2015-09-05 23:56:04 - desc".parse::<EntryLine>().unwrap_err(),
+            "PAUSE - 2015-09-05 23:56:04 - desc"
+                .parse::<EntryLine>()
+                .unwrap_err(),
             ParseError::UnknownEntryKind
         ));
     }
@@ -248,7 +267,9 @@ mod tests {
     #[test]
     fn entry_line_from_str_should_err_invalid_datetime() {
         assert!(matches!(
-            "START - not-a-date - desc".parse::<EntryLine>().unwrap_err(),
+            "START - not-a-date - desc"
+                .parse::<EntryLine>()
+                .unwrap_err(),
             ParseError::TimeFormat(_)
         ));
     }
@@ -322,14 +343,25 @@ mod tests {
             desc: "desc".to_string(),
             dt: parse_dt("2024-01-01 09:00:00"),
         };
-        assert!(matches!(Entry::new(&a, &b).unwrap_err(), ParseError::EndBeforeStart));
+        assert!(matches!(
+            Entry::new(&a, &b).unwrap_err(),
+            ParseError::EndBeforeStart
+        ));
     }
 
     #[test]
     fn entry_new_equal_start_and_end_time_is_valid() {
         let d = parse_dt("2024-01-01 09:00:00");
-        let a = EntryLine { kind: EntryKind::Start, desc: "desc".to_string(), dt: d };
-        let b = EntryLine { kind: EntryKind::End, desc: "desc".to_string(), dt: d };
+        let a = EntryLine {
+            kind: EntryKind::Start,
+            desc: "desc".to_string(),
+            dt: d,
+        };
+        let b = EntryLine {
+            kind: EntryKind::End,
+            desc: "desc".to_string(),
+            dt: d,
+        };
         assert!(Entry::new(&a, &b).is_ok());
     }
 }
