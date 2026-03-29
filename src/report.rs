@@ -333,4 +333,69 @@ END - 2024-01-01 11:30:00 - coding";
         let entries = report.build_start_entries("review", now).unwrap();
         assert_eq!(entries[1].dt, now + chrono::TimeDelta::seconds(1));
     }
+
+    // --- Report::build_end_entry ---
+
+    #[test]
+    fn build_end_entry_empty_report_returns_err() {
+        let report: Report = "".parse().unwrap();
+        let now = parse_dt("2024-01-01 12:00:00");
+        assert!(report.build_end_entry(now).is_err());
+    }
+
+    #[test]
+    fn build_end_entry_last_is_end_returns_err() {
+        let report: Report = ONE_PAIR.parse().unwrap();
+        let now = parse_dt("2024-01-01 12:00:00");
+        assert!(report.build_end_entry(now).is_err());
+    }
+
+    #[test]
+    fn build_end_entry_open_session_returns_end_entry() {
+        let input = "START - 2024-01-01 09:00:00 - coding";
+        let report: Report = input.parse().unwrap();
+        let now = parse_dt("2024-01-01 10:00:00");
+        let entry = report.build_end_entry(now).unwrap();
+        assert_eq!(entry.kind, EntryKind::End);
+    }
+
+    #[test]
+    fn build_end_entry_uses_now_as_dt() {
+        let input = "START - 2024-01-01 09:00:00 - coding";
+        let report: Report = input.parse().unwrap();
+        let now = parse_dt("2024-01-01 10:00:00");
+        let entry = report.build_end_entry(now).unwrap();
+        assert_eq!(entry.dt, now);
+    }
+
+    #[test]
+    fn build_end_entry_copies_desc_from_last_start() {
+        let input = "START - 2024-01-01 09:00:00 - coding";
+        let report: Report = input.parse().unwrap();
+        let now = parse_dt("2024-01-01 10:00:00");
+        let entry = report.build_end_entry(now).unwrap();
+        assert_eq!(entry.desc, "coding");
+    }
+
+    #[test]
+    fn build_end_entry_after_multiple_pairs_last_is_start() {
+        // Two completed pairs followed by an open START
+        let input = "\
+START - 2024-01-01 09:00:00 - coding\n\
+END - 2024-01-01 10:00:00 - coding\n\
+START - 2024-01-01 10:00:00 - review";
+        let report: Report = input.parse().unwrap();
+        let now = parse_dt("2024-01-01 11:00:00");
+        let entry = report.build_end_entry(now).unwrap();
+        assert_eq!(entry.kind, EntryKind::End);
+        assert_eq!(entry.desc, "review");
+        assert_eq!(entry.dt, now);
+    }
+
+    #[test]
+    fn build_end_entry_after_multiple_pairs_last_is_end_returns_err() {
+        let report: Report = TWO_TASKS.parse().unwrap();
+        let now = parse_dt("2024-01-01 12:00:00");
+        assert!(report.build_end_entry(now).is_err());
+    }
 }
