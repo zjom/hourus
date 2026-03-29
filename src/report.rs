@@ -29,6 +29,20 @@ impl Report {
         })
     }
 
+    pub fn build_end_entry(&self, now: NaiveDateTime) -> Result<EntryLine> {
+        if let Some(last) = self.entry_lines.last()
+            && last.kind == EntryKind::Start
+        {
+            Ok(EntryLine {
+                kind: EntryKind::End,
+                dt: now,
+                desc: last.desc.clone(),
+            })
+        } else {
+            Err(anyhow!("tried to end but nothing was started"))
+        }
+    }
+
     pub fn build_start_entries(&self, desc: &str, now: NaiveDateTime) -> Result<Vec<EntryLine>> {
         if desc.is_empty() {
             return Err(anyhow!("Must specify description"));

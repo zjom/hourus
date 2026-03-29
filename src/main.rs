@@ -38,6 +38,12 @@ fn run() -> Result<()> {
                 write!(writer, "\n{entry}")?;
             }
         }
+        Some(Commands::End {}) => {
+            let now = chrono::Local::now().naive_local();
+            let mut writer = get_file_writer(cli.path.as_deref())?;
+            let entry = report.build_end_entry(now)?;
+            write!(writer, "\n{entry}")?;
+        }
         None => {
             let total = report.total_duration();
             println!(

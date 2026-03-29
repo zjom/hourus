@@ -27,6 +27,8 @@ pub enum Commands {
         #[arg(short)]
         desc: String,
     },
+    /// Ends current session. Fails if no session is ongoing.
+    End {},
 }
 
 pub fn get_file_reader(path: Option<&str>) -> Result<Box<dyn Read>> {
