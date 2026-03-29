@@ -5,17 +5,16 @@ mod report;
 
 use anyhow::Result;
 use clap::Parser;
-use std::io::Read;
 use std::process;
 
 use cli::{Cli, Commands, get_file_reader, get_file_writer};
 
+use crate::report::Report;
+
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let mut reader = get_file_reader(cli.path.as_deref())?;
-    let mut input_buf = String::new();
-    reader.read_to_string(&mut input_buf)?;
-    let report: report::Report = input_buf.parse()?;
+    let reader = get_file_reader(cli.path.as_deref())?;
+    let report = Report::new(reader)?;
 
     match &cli.command {
         Some(Commands::Breakdown) => {

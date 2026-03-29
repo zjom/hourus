@@ -5,6 +5,7 @@ use chrono::{NaiveDateTime, TimeDelta};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -14,6 +15,20 @@ pub struct Report {
 }
 
 impl Report {
+    pub fn new(reader: Box<dyn Read>) -> Result<Report, ParseError> {
+        let entry_lines: Vec<EntryLine> = BufReader::new(reader)
+            .lines()
+            .map(|r| EntryLine::from_str(&r?))
+            .collect::<Result<_, _>>()?;
+
+        let entries = Report::make_entries_map(&entry_lines)?;
+
+        Ok(Report {
+            entries,
+            entry_lines,
+        })
+    }
+
     pub fn build_start_entries(&self, desc: &str, now: NaiveDateTime) -> Result<Vec<EntryLine>> {
         if desc.is_empty() {
             return Err(anyhow!("Must specify description"));
@@ -66,6 +81,19 @@ impl Report {
             .flat_map(|v| v.iter().map(Interval::duration))
             .sum()
     }
+
+    fn make_entries_map(
+        entry_lines: &Vec<EntryLine>,
+    ) -> Result<HashMap<String, Vec<Interval>>, ParseError> {
+        Ok(entry_lines
+            .iter()
+            .tuples()
+            .map(|(a, b)| Entry::new(a, b))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|e| (e.desc, e.interval))
+            .into_group_map())
+    }
 }
 
 impl FromStr for Report {
@@ -76,14 +104,7 @@ impl FromStr for Report {
             .map(EntryLine::from_str)
             .collect::<Result<_, _>>()?;
 
-        let entries = entry_lines
-            .iter()
-            .tuples()
-            .map(|(a, b)| Entry::new(a, b))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|e| (e.desc, e.interval))
-            .into_group_map();
+        let entries = Report::make_entries_map(&entry_lines)?;
 
         Ok(Report {
             entry_lines,
@@ -101,7 +122,8 @@ mod tests {
     }
 
     // A well-formed two-entry report (1 hour of "coding")
-    const ONE_PAIR: &str = "START - 2024-01-01 09:00:00 - coding\nEND - 2024-01-01 10:00:00 - coding";
+    const ONE_PAIR: &str =
+        "START - 2024-01-01 09:00:00 - coding\nEND - 2024-01-01 10:00:00 - coding";
 
     // Two tasks: coding 2 h, review 30 min
     const TWO_TASKS: &str = "\

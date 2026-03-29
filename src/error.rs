@@ -1,3 +1,5 @@
+use std::io;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("end time is before start time")]
@@ -17,4 +19,7 @@ pub enum ParseError {
 
     #[error("unknown entry line keyword")]
     UnknownEntryKind,
+
+    #[error("io error")]
+    IOError(#[from] io::Error),
 }
