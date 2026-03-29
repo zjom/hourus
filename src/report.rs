@@ -15,18 +15,20 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn new(reader: Box<dyn Read>) -> Result<Report, ParseError> {
-        let entry_lines: Vec<EntryLine> = BufReader::new(reader)
-            .lines()
-            .map(|r| EntryLine::from_str(&r?))
-            .collect::<Result<_, _>>()?;
-
+    pub fn new(entry_lines: Vec<EntryLine>) -> Result<Self, ParseError> {
         let entries = Report::make_entries_map(&entry_lines)?;
-
         Ok(Report {
             entries,
             entry_lines,
         })
+    }
+
+    pub fn from_reader(reader: Box<dyn Read>) -> Result<Self, ParseError> {
+        let entry_lines: Vec<EntryLine> = BufReader::new(reader)
+            .lines()
+            .map(|r| EntryLine::from_str(&r?))
+            .collect::<Result<_, _>>()?;
+        Report::new(entry_lines)
     }
 
     pub fn build_end_entry(&self, now: NaiveDateTime) -> Result<EntryLine> {
