@@ -99,7 +99,6 @@ pub enum ReportSource {
 }
 
 impl ReportBuilder {
-    // 1. Standard constructor
     pub fn new() -> Self {
         ReportBuilder {
             source: None,
@@ -108,25 +107,21 @@ impl ReportBuilder {
         }
     }
 
-    // 2. Chainable method accepting the ReportSource enum directly
     pub fn from_source(mut self, source: ReportSource) -> Self {
         self.source = Some(source);
         self
     }
 
-    // (Optional but recommended) Chainable helper for lines
     pub fn with_lines(mut self, lines: impl IntoIterator<Item = EntryLine>) -> Self {
         self.source = Some(ReportSource::Lines(lines.into_iter().collect()));
         self
     }
 
-    // (Optional but recommended) Chainable helper for a reader
     pub fn with_reader(mut self, reader: Box<dyn Read>) -> Self {
         self.source = Some(ReportSource::Reader(reader));
         self
     }
 
-    // 3. These were already chainable!
     pub fn from(mut self, dt: NaiveDateTime) -> Self {
         self.from = Some(dt);
         self
@@ -137,7 +132,6 @@ impl ReportBuilder {
         self
     }
 
-    // 4. Build consumes the builder
     pub fn build(self) -> Result<Report, ParseError> {
         let source = self.source.ok_or(ParseError::NoReportSource)?;
 
@@ -179,7 +173,6 @@ impl ReportBuilder {
     }
 }
 
-// You can optionally implement Default since new() takes no arguments and sets None
 impl Default for ReportBuilder {
     fn default() -> Self {
         Self::new()
