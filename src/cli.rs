@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::{Local, NaiveDate, NaiveTime};
 use clap::{Parser, Subcommand};
+use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 
@@ -12,8 +13,14 @@ use crate::report::Report;
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Path to .hours file.
+    /// Uses HOURUS_DEFAULT_FILE env variable if present.
+    /// Pass --no-env flag to prevent.
     #[arg(short, long)]
     pub path: Option<String>,
+
+    /// Do not use the HOURUS_DEFAULT_FILE env as file path
+    #[arg(long)]
+    pub no_env: Option<bool>,
 
     #[arg(short, long)]
     pub from: Option<NaiveDate>,
@@ -46,9 +53,16 @@ pub enum Commands {
     End {},
 }
 
+static ENV_KEY: &str = "HOURUS_DEFAULT_FILE";
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let reader = get_file_reader(cli.path.as_deref())?;
+    let path = match cli.no_env.unwrap_or(false) {
+        true => env::var(ENV_KEY).ok(),
+        false => cli.path,
+    };
+
+    let reader = get_file_reader(path.as_deref())?;
     let report_builder = Report::new().with_reader(reader);
     match &cli.command {
         Some(Commands::Breakdown { from, to }) => {
@@ -74,7 +88,7 @@ pub fn run() -> Result<()> {
         Some(Commands::Start { desc }) => {
             let report = report_builder.build()?;
             let now = chrono::Local::now().naive_local();
-            let mut writer = get_file_writer(cli.path.as_deref())?;
+            let mut writer = get_file_writer(path.as_deref())?;
             let entries = report.build_start_entries(desc, now)?;
             for entry in entries {
                 write!(writer, "\n{entry}")?;
@@ -83,7 +97,7 @@ pub fn run() -> Result<()> {
         Some(Commands::End {}) => {
             let report = report_builder.build()?;
             let now = chrono::Local::now().naive_local();
-            let mut writer = get_file_writer(cli.path.as_deref())?;
+            let mut writer = get_file_writer(path.as_deref())?;
             let entry = report.build_end_entry(now)?;
             write!(writer, "\n{entry}")?;
         }
