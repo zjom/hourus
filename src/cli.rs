@@ -13,14 +13,14 @@ use crate::report::Report;
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Path to .hours file.
-    /// Uses HOURUS_DEFAULT_FILE env variable if present.
+    /// Defaults to HOURUS_DEFAULT_FILE env var.
     /// Pass --no-env flag to prevent.
     #[arg(short, long)]
     pub path: Option<String>,
 
     /// Do not use the HOURUS_DEFAULT_FILE env as file path
     #[arg(long)]
-    pub no_env: Option<bool>,
+    pub no_env: bool,
 
     #[arg(short, long)]
     pub from: Option<NaiveDate>,
@@ -57,7 +57,7 @@ static ENV_KEY: &str = "HOURUS_DEFAULT_FILE";
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let path = match cli.no_env.unwrap_or(false) {
+    let path = match cli.no_env {
         true => env::var(ENV_KEY).ok(),
         false => cli.path,
     };
