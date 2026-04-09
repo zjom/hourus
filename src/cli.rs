@@ -34,6 +34,10 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+    format: OutputFormat,
 }
 
 #[derive(Subcommand, Debug)]
@@ -106,7 +110,7 @@ pub fn run() -> Result<()> {
                 .to(date_end(&cli.to))
                 .build()?;
 
-            OutputFormat::default().write_total(stdout, report.total_duration())?
+            cli.format.write_total(stdout, report.total_duration())?
         }
     }
 
