@@ -12,7 +12,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -30,9 +30,18 @@ enum SessionState {
     },
 }
 
+/// State carried while the description prompt is open.
+struct PromptState {
+    textarea: TextArea<'static>,
+    /// The user's own typed text, captured the moment Up is first pressed.
+    saved_input: String,
+    /// Index into `App::history` while navigating; `None` means the user's own input.
+    history_idx: Option<usize>,
+}
+
 enum Mode {
     Normal,
-    Prompting(TextArea<'static>),
+    Prompting(PromptState),
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +52,8 @@ struct App {
     session: SessionState,
     mode: Mode,
     storage: FileStorage,
+    /// Unique task descriptions, most-recent-first. Built from START lines, deduped.
+    history: Vec<String>,
     /// Completed-session time in the past 24 h, updated whenever a session ends/pauses.
     base_duration_today: TimeDelta,
     exit: bool,
@@ -52,8 +63,9 @@ impl App {
     fn new(storage: FileStorage) -> Result<Self> {
         let lines = storage.load()?;
 
-        // Determine current session state from the last entry line.
         let state_report = Report::new().with_lines(lines.clone()).build()?;
+
+        // Determine current session state from the last entry line.
         let session = match state_report.entry_lines.last() {
             Some(last) if last.kind == EntryKind::Start => SessionState::Active {
                 desc: last.desc.clone(),
@@ -61,6 +73,9 @@ impl App {
             },
             _ => SessionState::Idle,
         };
+
+        // Build deduped history from all START lines, most-recent-first.
+        let history = Self::build_history(&state_report.entry_lines);
 
         // Pre-compute completed session time for the past 24 h.
         let since_24h = Local::now().naive_local() - TimeDelta::hours(24);
@@ -74,9 +89,27 @@ impl App {
             session,
             mode: Mode::Normal,
             storage,
+            history,
             base_duration_today,
             exit: false,
         })
+    }
+
+    /// Build a deduplicated list of task descriptions (most-recent-first) from entry lines.
+    fn build_history(entry_lines: &[EntryLine]) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        entry_lines
+            .iter()
+            .rev()
+            .filter(|l| l.kind == EntryKind::Start)
+            .filter_map(|l| seen.insert(l.desc.clone()).then(|| l.desc.clone()))
+            .collect()
+    }
+
+    /// Prepend `desc` to history, removing any prior occurrence so there are no duplicates.
+    fn push_history(&mut self, desc: &str) {
+        self.history.retain(|d| d != desc);
+        self.history.insert(0, desc.to_owned());
     }
 
     /// Total logged in the past 24 h, including the currently running session.
@@ -91,8 +124,9 @@ impl App {
         self.base_duration_today + running
     }
 
-    fn new_textarea() -> TextArea<'static> {
-        let mut ta = TextArea::default();
+    /// Create a styled textarea, pre-filled with `content` and cursor at end-of-line.
+    fn make_textarea(content: &str) -> TextArea<'static> {
+        let mut ta = TextArea::from([content.to_owned()]);
         ta.set_placeholder_text("task description...");
         ta.set_cursor_line_style(Style::default());
         ta.set_block(
@@ -101,7 +135,16 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan))
                 .title(" new session "),
         );
+        ta.move_cursor(CursorMove::End);
         ta
+    }
+
+    fn open_prompt(&self) -> PromptState {
+        PromptState {
+            textarea: Self::make_textarea(""),
+            saved_input: String::new(),
+            history_idx: None,
+        }
     }
 
     fn append_line(&mut self, kind: EntryKind, dt: NaiveDateTime, desc: &str) -> Result<()> {
@@ -112,7 +155,7 @@ impl App {
         }])?)
     }
 
-    /// Account for completed session time, then update `base_duration_today`.
+    /// Account for a just-completed session interval in `base_duration_today`.
     fn accrue(&mut self, started_at: NaiveDateTime, ended_at: NaiveDateTime) {
         let since_24h = ended_at - TimeDelta::hours(24);
         if started_at >= since_24h {
@@ -128,7 +171,6 @@ impl App {
     /// Space: pause a running session, or resume a paused one.
     fn toggle_pause(&mut self) -> Result<()> {
         let now = Local::now().naive_local();
-        // Move session out to avoid borrow-checker conflicts when calling &mut self methods.
         let prev = std::mem::replace(&mut self.session, SessionState::Idle);
         match prev {
             SessionState::Active { desc, started_at } => {
@@ -138,17 +180,14 @@ impl App {
             }
             SessionState::Paused { desc } => {
                 self.append_line(EntryKind::Start, now, &desc)?;
-                self.session = SessionState::Active {
-                    desc,
-                    started_at: now,
-                };
+                self.session = SessionState::Active { desc, started_at: now };
             }
             idle => self.session = idle,
         }
         Ok(())
     }
 
-    /// Esc: end the active session, discard a paused one, or quit if idle.
+    /// Esc: end the active session, discard a paused one, or quit if already idle.
     fn end_or_quit(&mut self) -> Result<()> {
         let now = Local::now().naive_local();
         let prev = std::mem::replace(&mut self.session, SessionState::Idle);
@@ -156,38 +195,29 @@ impl App {
             SessionState::Active { desc, started_at } => {
                 self.append_line(EntryKind::End, now, &desc)?;
                 self.accrue(started_at, now);
-                // session stays Idle
             }
-            SessionState::Paused { .. } => {
-                // Discard the paused state; session stays Idle.
-            }
-            SessionState::Idle => {
-                self.session = SessionState::Idle;
-                self.exit = true;
-            }
+            SessionState::Paused { .. } => { /* discard, session stays Idle */ }
+            SessionState::Idle => self.exit = true,
         }
         Ok(())
     }
 
-    /// Start a new session with the given desc, ending the current one if necessary.
+    /// Start a new session with `desc`, ending the current one first if necessary.
     fn start_session(&mut self, desc: &str, now: NaiveDateTime) -> Result<()> {
         let prev = std::mem::replace(&mut self.session, SessionState::Idle);
-        // If something was running, end it first.
-        let new_start = match prev {
-            SessionState::Active {
-                desc: old_desc,
-                started_at,
-            } => {
+        let start_dt = match prev {
+            SessionState::Active { desc: old_desc, started_at } => {
                 self.append_line(EntryKind::End, now, &old_desc)?;
                 self.accrue(started_at, now);
                 now + TimeDelta::seconds(1)
             }
             _ => now,
         };
-        self.append_line(EntryKind::Start, new_start, desc)?;
+        self.append_line(EntryKind::Start, start_dt, desc)?;
+        self.push_history(desc);
         self.session = SessionState::Active {
             desc: desc.to_owned(),
-            started_at: new_start,
+            started_at: start_dt,
         };
         Ok(())
     }
@@ -214,11 +244,12 @@ impl App {
         // Move mode out to get an owned value, avoiding borrow conflicts.
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         match mode {
-            Mode::Prompting(mut ta) => {
+            Mode::Prompting(mut p) => {
                 match key.code {
                     KeyCode::Esc => { /* mode stays Normal – cancels the prompt */ }
+
                     KeyCode::Enter => {
-                        let desc = ta
+                        let desc = p.textarea
                             .lines()
                             .first()
                             .map(|l| l.trim().to_lowercase())
@@ -227,21 +258,64 @@ impl App {
                             self.start_session(&desc, Local::now().naive_local())?;
                             // mode stays Normal
                         } else {
-                            // Empty input: put prompting mode back unchanged.
-                            self.mode = Mode::Prompting(ta);
+                            self.mode = Mode::Prompting(p);
                         }
                     }
+
+                    KeyCode::Up => {
+                        let next_idx = match p.history_idx {
+                            None if !self.history.is_empty() => {
+                                // Capture the user's current typed text before navigating.
+                                p.saved_input = p.textarea
+                                    .lines()
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_default();
+                                Some(0)
+                            }
+                            Some(i) if i + 1 < self.history.len() => Some(i + 1),
+                            other => other, // already at oldest, or history empty
+                        };
+                        if next_idx != p.history_idx {
+                            p.history_idx = next_idx;
+                            p.textarea =
+                                Self::make_textarea(&self.history[next_idx.unwrap()]);
+                        }
+                        self.mode = Mode::Prompting(p);
+                    }
+
+                    KeyCode::Down => {
+                        match p.history_idx {
+                            Some(0) => {
+                                p.history_idx = None;
+                                let saved = p.saved_input.clone();
+                                p.textarea = Self::make_textarea(&saved);
+                            }
+                            Some(i) => {
+                                p.history_idx = Some(i - 1);
+                                p.textarea =
+                                    Self::make_textarea(&self.history[i - 1]);
+                            }
+                            None => {} // already at user's own input
+                        }
+                        self.mode = Mode::Prompting(p);
+                    }
+
                     _ => {
-                        ta.input(key);
-                        self.mode = Mode::Prompting(ta);
+                        // Any other key: if navigating history, exit navigation mode
+                        // (the textarea keeps whatever was shown – the user is now editing it).
+                        p.history_idx = None;
+                        p.textarea.input(key);
+                        self.mode = Mode::Prompting(p);
                     }
                 }
             }
+
             Mode::Normal => match key.code {
                 KeyCode::Char('q') => self.exit = true,
                 KeyCode::Char(' ') => self.toggle_pause()?,
                 KeyCode::Esc => self.end_or_quit()?,
-                KeyCode::Enter => self.mode = Mode::Prompting(Self::new_textarea()),
+                KeyCode::Enter => self.mode = Mode::Prompting(self.open_prompt()),
                 _ => {}
             },
         }
@@ -271,7 +345,7 @@ impl App {
 
         match &self.mode {
             Mode::Normal => self.draw_normal(frame, content),
-            Mode::Prompting(ta) => self.draw_prompting(frame, content, ta),
+            Mode::Prompting(p) => self.draw_prompting(frame, content, p),
         }
         self.draw_hints(frame, hints);
     }
@@ -324,87 +398,74 @@ impl App {
             Span::raw("  logged today  "),
             Span::styled(
                 format_duration(self.duration_today()),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
         ]));
 
         frame.render_widget(Paragraph::new(lines), area);
     }
 
-    fn draw_prompting(&self, frame: &mut Frame, area: Rect, ta: &TextArea) {
-        // Vertically: 2 rows of padding, then 3 rows for the textarea (border + 1 line).
-        let [_, textarea_area, _] = Layout::vertical([
+    fn draw_prompting(&self, frame: &mut Frame, area: Rect, p: &PromptState) {
+        // 2 rows of top padding, then 3 rows for the textarea (border + 1 input line).
+        let [_, ta_area, _] = Layout::vertical([
             Constraint::Length(2),
             Constraint::Length(3),
             Constraint::Min(0),
         ])
         .areas(area);
 
-        // Horizontal: 2-column gutter on each side.
+        // 2-column gutter on each side.
         let [_, ta_inner, _] = Layout::horizontal([
             Constraint::Length(2),
             Constraint::Min(0),
             Constraint::Length(2),
         ])
-        .areas(textarea_area);
+        .areas(ta_area);
 
-        frame.render_widget(ta, ta_inner);
+        frame.render_widget(&p.textarea, ta_inner);
     }
 
     fn draw_hints(&self, frame: &mut Frame, area: Rect) {
         let style_key = Style::default().bg(Color::DarkGray).fg(Color::White);
-        let style_sep = Style::default().fg(Color::DarkGray);
+        let style_dim = Style::default().fg(Color::DarkGray);
 
-        let sep = || Span::styled("  ", style_sep);
+        let sep = || Span::styled("  ", style_dim);
         let key = |label: &'static str| Span::styled(format!(" {label} "), style_key);
-        let text = |label: &'static str| Span::raw(format!(" {label}"));
+        let txt = |label: &'static str| Span::raw(format!(" {label}"));
 
         let hints: Line = match &self.mode {
             Mode::Prompting(_) => Line::from(vec![
-                key("enter"),
-                text("confirm"),
+                key("↑↓"), txt("history"),
                 sep(),
-                key("esc"),
-                text("cancel"),
+                key("enter"), txt("confirm"),
+                sep(),
+                key("esc"), txt("cancel"),
             ]),
             Mode::Normal => match &self.session {
                 SessionState::Active { .. } => Line::from(vec![
-                    key("space"),
-                    text("pause"),
+                    key("space"), txt("pause"),
                     sep(),
-                    key("esc"),
-                    text("end"),
+                    key("esc"), txt("end"),
                     sep(),
-                    key("enter"),
-                    text("new task"),
+                    key("enter"), txt("new task"),
                     sep(),
-                    key("q"),
-                    text("quit"),
+                    key("q"), txt("quit"),
                 ]),
                 SessionState::Paused { .. } => Line::from(vec![
-                    key("space"),
-                    text("resume"),
+                    key("space"), txt("resume"),
                     sep(),
-                    key("esc"),
-                    text("discard"),
+                    key("esc"), txt("discard"),
                     sep(),
-                    key("enter"),
-                    text("new task"),
+                    key("enter"), txt("new task"),
                     sep(),
-                    key("q"),
-                    text("quit"),
+                    key("q"), txt("quit"),
                 ]),
                 SessionState::Idle => Line::from(vec![
-                    key("enter"),
-                    text("start"),
+                    key("enter"), txt("start"),
                     sep(),
-                    key("esc"),
-                    text("quit"),
+                    key("esc"), txt("quit"),
                     sep(),
-                    key("q"),
-                    text("quit"),
+                    key("q"), txt("quit"),
                 ]),
             },
         };
