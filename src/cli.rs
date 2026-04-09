@@ -67,23 +67,19 @@ pub fn run() -> Result<()> {
     match &cli.command {
         Some(Commands::Breakdown { from, to }) => {
             let from = from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
-            let to = to
+            let to = cli
+                .to
                 .unwrap_or(Local::now().date_naive())
-                .and_time(NaiveTime::MIN);
+                .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
 
             let report = report_builder.from(from).to(to).build()?;
 
             let summary = report.summarize();
             for (desc, dur) in &summary {
-                println!("{desc}: {}h {}m", dur.num_hours(), dur.num_minutes() % 60);
+                println!("{desc}: {}", format_duration(dur));
             }
 
-            let total = report.total_duration();
-            println!(
-                "Total: {}h {}m",
-                total.num_hours(),
-                total.num_minutes() % 60
-            );
+            println!("{}", format_duration(&report.total_duration()));
         }
         Some(Commands::Start { desc }) => {
             let report = report_builder.build()?;
@@ -106,15 +102,10 @@ pub fn run() -> Result<()> {
             let to = cli
                 .to
                 .unwrap_or(Local::now().date_naive())
-                .and_time(NaiveTime::MIN);
+                .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
             let report = report_builder.from(from).to(to).build()?;
 
-            let total = report.total_duration();
-            println!(
-                "Total: {}h {}m",
-                total.num_hours(),
-                total.num_minutes() % 60
-            );
+            println!("{}", format_duration(&report.total_duration()));
         }
     }
 
@@ -133,4 +124,17 @@ fn get_file_writer(path: Option<&str>) -> Result<Box<dyn Write>> {
         Some(path) => Box::new(fs::OpenOptions::new().append(true).open(path)?),
         None => Box::new(io::stdout()),
     })
+}
+
+fn format_duration(delta: &chrono::TimeDelta) -> String {
+    let total_minutes = delta.num_minutes().abs();
+    let hours = total_minutes / 60;
+    let minutes = total_minutes % 60;
+    let sign = if delta.num_seconds() < 0 { "-" } else { "" };
+
+    match (hours, minutes) {
+        (0, m) => format!("{sign}{m}m"),
+        (h, 0) => format!("{sign}{h}h"),
+        (h, m) => format!("{sign}{h}h {m}m"),
+    }
 }
