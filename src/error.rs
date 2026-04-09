@@ -1,5 +1,5 @@
-use std::io;
-
+/// Errors arising from parsing entry lines or assembling entries.
+/// Pure domain errors — no I/O.
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("end time is before start time")]
@@ -19,10 +19,14 @@ pub enum ParseError {
 
     #[error("unknown entry line keyword")]
     UnknownEntryKind,
+}
 
-    #[error("io error")]
-    IOError(#[from] io::Error),
+/// Errors arising from reading or writing the backing store.
+#[derive(thiserror::Error, Debug)]
+pub enum StorageError {
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 
-    #[error("no report source specified")]
-    NoReportSource,
+    #[error("parse error: {0}")]
+    Parse(#[from] ParseError),
 }

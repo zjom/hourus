@@ -1,30 +1,34 @@
 use anyhow::Result;
-use chrono::{Local, NaiveDate, NaiveTime};
+use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime};
 use clap::{Parser, Subcommand};
 use std::env;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io;
+use std::path::PathBuf;
 
+use crate::output::OutputFormat;
 use crate::report::Report;
+use crate::storage::{FileStorage, Storage};
 
-/// Parses and summarises .hours log file. Data can be passed in via the --path flag or stdin
-/// (default).
+/// Parses and summarises .hours log files.
+///
+/// Data can be passed via `--path`, the `HOURUS_DEFAULT_FILE` environment variable, or stdin.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Path to .hours file.
-    /// Defaults to HOURUS_DEFAULT_FILE env var.
-    /// Pass --no-env flag to prevent.
+    /// Path to the .hours file.
+    /// Falls back to the HOURUS_DEFAULT_FILE environment variable unless --no-env is set.
     #[arg(short, long)]
     pub path: Option<String>,
 
-    /// Do not use the HOURUS_DEFAULT_FILE env as file path
+    /// Ignore the HOURUS_DEFAULT_FILE environment variable.
     #[arg(long)]
     pub no_env: bool,
 
+    /// Only include entries on or after this date.
     #[arg(short, long)]
     pub from: Option<NaiveDate>,
 
+    /// Only include entries on or before this date.
     #[arg(short, long)]
     pub to: Option<NaiveDate>,
 
@@ -34,22 +38,26 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Prints breakdown of hours by task
+    /// Print a breakdown of hours by task.
     Breakdown {
         #[arg(short, long)]
         from: Option<NaiveDate>,
 
         #[arg(short, long)]
         to: Option<NaiveDate>,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
+        format: OutputFormat,
     },
-    /// Appends new session to file, ending current if exists.
-    /// specified. Does not respect --from and --to flags.
+    /// Start a new session, auto-ending the current one if open.
+    /// Ignores --from and --to.
     Start {
-        /// Description of the entry
+        /// Description of the task being started.
         desc: String,
     },
-    /// Ends current session. Fails if no session is ongoing.
-    /// Does not respect --from and --to flags.
+    /// End the current session. Fails if no session is ongoing.
+    /// Ignores --from and --to.
     End {},
 }
 
@@ -57,83 +65,61 @@ static ENV_KEY: &str = "HOURUS_DEFAULT_FILE";
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let path = match cli.no_env {
-        true => env::var(ENV_KEY).ok(),
-        false => cli.path,
-    };
 
-    let reader = get_file_reader(path.as_deref())?;
-    let report_builder = Report::new().with_reader(reader);
+    // Resolve the file path: explicit --path takes priority; then the env var (unless
+    // --no-env is set); then fall back to stdin/stdout.
+    let path: Option<PathBuf> = cli.path.map(PathBuf::from).or_else(|| {
+        if cli.no_env {
+            None
+        } else {
+            env::var(ENV_KEY).ok().map(PathBuf::from)
+        }
+    });
+
+    let mut storage = FileStorage::new(path);
+    let stdout = &mut io::stdout();
+
     match &cli.command {
-        Some(Commands::Breakdown { from, to }) => {
-            let from = from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
-            let to = to
-                .unwrap_or(Local::now().date_naive())
-                .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+        Some(Commands::Breakdown { from, to, format }) => {
+            let report = Report::new()
+                .with_lines(storage.load()?)
+                .from(date_start(from))
+                .to(date_end(to))
+                .build()?;
 
-            let report = report_builder.from(from).to(to).build()?;
-
-            let summary = report.summarize();
-            for (desc, dur) in &summary {
-                println!("{desc}: {}", format_duration(dur));
-            }
-
-            println!("{}", format_duration(&report.total_duration()));
+            format.write_breakdown(stdout, &report.summarize(), report.total_duration())?;
         }
         Some(Commands::Start { desc }) => {
-            let report = report_builder.build()?;
-            let now = chrono::Local::now().naive_local();
-            let mut writer = get_file_writer(path.as_deref())?;
-            let entries = report.build_start_entries(desc, now)?;
-            for entry in entries {
-                write!(writer, "\n{entry}")?;
-            }
+            let report = Report::new().with_lines(storage.load()?).build()?;
+            let entries = report.build_start_entries(desc, Local::now().naive_local())?;
+            storage.append(&entries)?;
         }
         Some(Commands::End {}) => {
-            let report = report_builder.build()?;
-            let now = chrono::Local::now().naive_local();
-            let mut writer = get_file_writer(path.as_deref())?;
-            let entry = report.build_end_entry(now)?;
-            write!(writer, "\n{entry}")?;
+            let report = Report::new().with_lines(storage.load()?).build()?;
+            let entry = report.build_end_entry(Local::now().naive_local())?;
+            storage.append(&[entry])?;
         }
         None => {
-            let from = cli.from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
-            let to = cli
-                .to
-                .unwrap_or(Local::now().date_naive())
-                .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
-            let report = report_builder.from(from).to(to).build()?;
+            let report = Report::new()
+                .with_lines(storage.load()?)
+                .from(date_start(&cli.from))
+                .to(date_end(&cli.to))
+                .build()?;
 
-            println!("{}", format_duration(&report.total_duration()));
+            OutputFormat::default().write_total(stdout, report.total_duration())?
         }
     }
 
     Ok(())
 }
 
-fn get_file_reader(path: Option<&str>) -> Result<Box<dyn Read>> {
-    Ok(match path {
-        Some(path) => Box::new(File::open(path)?),
-        None => Box::new(io::stdin()),
-    })
+/// Resolve an optional date to the start of that day (or the minimum date if absent).
+fn date_start(date: &Option<NaiveDate>) -> NaiveDateTime {
+    date.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN)
 }
 
-fn get_file_writer(path: Option<&str>) -> Result<Box<dyn Write>> {
-    Ok(match path {
-        Some(path) => Box::new(fs::OpenOptions::new().append(true).open(path)?),
-        None => Box::new(io::stdout()),
-    })
-}
-
-fn format_duration(delta: &chrono::TimeDelta) -> String {
-    let total_minutes = delta.num_minutes().abs();
-    let hours = total_minutes / 60;
-    let minutes = total_minutes % 60;
-    let sign = if delta.num_seconds() < 0 { "-" } else { "" };
-
-    match (hours, minutes) {
-        (0, m) => format!("{sign}{m}m"),
-        (h, 0) => format!("{sign}{h}h"),
-        (h, m) => format!("{sign}{h}h {m}m"),
-    }
+/// Resolve an optional date to the last second of that day (or today if absent).
+fn date_end(date: &Option<NaiveDate>) -> NaiveDateTime {
+    date.unwrap_or_else(|| Local::now().date_naive())
+        .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap())
 }

@@ -5,18 +5,19 @@ use chrono::{NaiveDateTime, TimeDelta};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Report {
     pub entries: HashMap<String, Vec<Interval>>,
     pub entry_lines: Vec<EntryLine>,
 }
 
 impl Report {
+    /// Returns a [`ReportBuilder`]. Uses `new` for ergonomics: `Report::new().with_lines(...).build()`.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> ReportBuilder {
-        ReportBuilder::new()
+        ReportBuilder::default()
     }
 
     pub fn build_end_entry(&self, now: NaiveDateTime) -> Result<EntryLine> {
@@ -87,38 +88,17 @@ impl Report {
     }
 }
 
+/// Builder for constructing a [`Report`] from a set of entry lines with optional date filtering.
+#[derive(Default)]
 pub struct ReportBuilder {
-    source: Option<ReportSource>,
+    lines: Vec<EntryLine>,
     from: Option<NaiveDateTime>,
     to: Option<NaiveDateTime>,
 }
 
-pub enum ReportSource {
-    Lines(Vec<EntryLine>),
-    Reader(Box<dyn Read>),
-}
-
 impl ReportBuilder {
-    pub fn new() -> Self {
-        ReportBuilder {
-            source: None,
-            from: None,
-            to: None,
-        }
-    }
-
-    pub fn from_source(mut self, source: ReportSource) -> Self {
-        self.source = Some(source);
-        self
-    }
-
     pub fn with_lines(mut self, lines: impl IntoIterator<Item = EntryLine>) -> Self {
-        self.source = Some(ReportSource::Lines(lines.into_iter().collect()));
-        self
-    }
-
-    pub fn with_reader(mut self, reader: Box<dyn Read>) -> Self {
-        self.source = Some(ReportSource::Reader(reader));
+        self.lines = lines.into_iter().collect();
         self
     }
 
@@ -133,21 +113,12 @@ impl ReportBuilder {
     }
 
     pub fn build(self) -> Result<Report, ParseError> {
-        let source = self.source.ok_or(ParseError::NoReportSource)?;
-
-        let entry_lines: Vec<EntryLine> = match source {
-            ReportSource::Lines(lines) => lines,
-            ReportSource::Reader(reader) => BufReader::new(reader)
-                .lines()
-                .map(|r| EntryLine::from_str(&r?))
-                .collect::<Result<_, _>>()?,
-        };
-
-        let entry_lines: Vec<EntryLine> = entry_lines
+        let entry_lines: Vec<EntryLine> = self
+            .lines
             .into_iter()
             .filter(|el| {
-                self.from.map_or(true, |from| el.dt >= from)
-                    && self.to.map_or(true, |to| el.dt <= to)
+                self.from.is_none_or(|from| el.dt >= from)
+                    && self.to.is_none_or(|to| el.dt <= to)
             })
             .collect();
 
@@ -160,7 +131,7 @@ impl ReportBuilder {
     }
 
     fn make_entries_map(
-        entry_lines: &Vec<EntryLine>,
+        entry_lines: &[EntryLine],
     ) -> Result<HashMap<String, Vec<Interval>>, ParseError> {
         Ok(entry_lines
             .iter()
@@ -173,12 +144,6 @@ impl ReportBuilder {
     }
 }
 
-impl Default for ReportBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl FromStr for Report {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -186,13 +151,7 @@ impl FromStr for Report {
             .lines()
             .map(EntryLine::from_str)
             .collect::<Result<_, _>>()?;
-
-        let entries = ReportBuilder::make_entries_map(&entry_lines)?;
-
-        Ok(Report {
-            entry_lines,
-            entries,
-        })
+        Report::new().with_lines(entry_lines).build()
     }
 }
 

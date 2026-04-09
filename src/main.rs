@@ -1,7 +1,9 @@
 mod cli;
 mod entry;
 mod error;
+mod output;
 mod report;
+mod storage;
 
 use std::process;
 
