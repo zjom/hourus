@@ -4,6 +4,7 @@ mod error;
 mod output;
 mod report;
 mod storage;
+mod tui;
 
 use std::process;
 

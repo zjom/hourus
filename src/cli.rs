@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::output::OutputFormat;
 use crate::report::Report;
 use crate::storage::{FileStorage, Storage};
+use crate::tui;
 
 /// Parses and summarises .hours log files.
 ///
@@ -59,6 +60,10 @@ pub enum Commands {
     Start {
         /// Description of the task being started.
         desc: String,
+
+        /// Start in interactive mode.
+        #[arg(short, long)]
+        interactive: bool,
     },
     /// End the current session. Fails if no session is ongoing.
     /// Ignores --from and --to.
@@ -93,7 +98,10 @@ pub fn run() -> Result<()> {
 
             format.write_breakdown(stdout, &report.summarize(), report.total_duration())?;
         }
-        Some(Commands::Start { desc }) => {
+        Some(Commands::Start { desc, interactive }) if *interactive => {
+            return tui::run(storage);
+        }
+        Some(Commands::Start { desc, .. }) => {
             let report = Report::new().with_lines(storage.load()?).build()?;
             let entries = report.build_start_entries(desc, Local::now().naive_local())?;
             storage.append(&entries)?;

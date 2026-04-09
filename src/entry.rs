@@ -3,7 +3,7 @@ use chrono::{NaiveDateTime, TimeDelta};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum EntryKind {
     Start,
     End,
@@ -29,7 +29,7 @@ impl FromStr for EntryKind {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct EntryLine {
     pub kind: EntryKind,
     pub desc: String,
