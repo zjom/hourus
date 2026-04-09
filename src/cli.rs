@@ -67,8 +67,7 @@ pub fn run() -> Result<()> {
     match &cli.command {
         Some(Commands::Breakdown { from, to }) => {
             let from = from.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN);
-            let to = cli
-                .to
+            let to = to
                 .unwrap_or(Local::now().date_naive())
                 .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
 
