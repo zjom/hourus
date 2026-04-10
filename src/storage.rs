@@ -40,6 +40,10 @@ impl Storage for FileStorage {
 
         BufReader::new(reader)
             .lines()
+            .filter(|line_result| match line_result {
+                Ok(line) => !line.trim().is_empty(),
+                Err(_) => true,
+            })
             .map(|line| Ok(EntryLine::from_str(&line?)?))
             .collect()
     }
