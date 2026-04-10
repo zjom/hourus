@@ -3,7 +3,7 @@ use crate::output::format_duration;
 use crate::report::Report;
 use crate::storage::{FileStorage, Storage};
 use anyhow::Result;
-use chrono::{Local, NaiveDateTime, TimeDelta, Timelike};
+use chrono::{Local, NaiveDateTime, TimeDelta};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use ratatui_textarea::{CursorMove, TextArea};
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,8 @@ struct App {
     mode: Mode,
     storage: FileStorage,
     /// Unique task descriptions, most-recent-first. Built from START lines, deduped.
-    history: Vec<String>,
+    history: VecDeque<String>,
+    history_set: HashSet<String>,
     /// Completed-session time in the past 24 h, updated whenever a session ends/pauses.
     base_duration_today: TimeDelta,
     exit: bool,
@@ -75,7 +77,8 @@ impl App {
         };
 
         // Build deduped history from all START lines, most-recent-first.
-        let history = Self::build_history(&state_report.entry_lines);
+        let mut history_set = HashSet::new();
+        let history = Self::build_history(&mut history_set, &state_report.entry_lines);
 
         // Pre-compute completed session time for the past 24 h.
         let since_today = Local::now()
@@ -94,14 +97,14 @@ impl App {
             mode: Mode::Normal,
             storage,
             history,
+            history_set,
             base_duration_today,
             exit: false,
         })
     }
 
     /// Build a deduplicated list of task descriptions (most-recent-first) from entry lines.
-    fn build_history(entry_lines: &[EntryLine]) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
+    fn build_history(seen: &mut HashSet<String>, entry_lines: &[EntryLine]) -> VecDeque<String> {
         entry_lines
             .iter()
             .rev()
@@ -112,8 +115,10 @@ impl App {
 
     /// Prepend `desc` to history, removing any prior occurrence so there are no duplicates.
     fn push_history(&mut self, desc: &str) {
-        self.history.retain(|d| d != desc);
-        self.history.insert(0, desc.to_owned());
+        if !self.history_set.insert(desc.to_owned()) {
+            self.history.retain(|d| d != desc);
+        }
+        self.history.push_front(desc.to_owned());
     }
 
     /// Total logged in the past 24 h, including the currently running session.
