@@ -180,7 +180,10 @@ impl App {
             }
             SessionState::Paused { desc } => {
                 self.append_line(EntryKind::Start, now, &desc)?;
-                self.session = SessionState::Active { desc, started_at: now };
+                self.session = SessionState::Active {
+                    desc,
+                    started_at: now,
+                };
             }
             idle => self.session = idle,
         }
@@ -206,7 +209,10 @@ impl App {
     fn start_session(&mut self, desc: &str, now: NaiveDateTime) -> Result<()> {
         let prev = std::mem::replace(&mut self.session, SessionState::Idle);
         let start_dt = match prev {
-            SessionState::Active { desc: old_desc, started_at } => {
+            SessionState::Active {
+                desc: old_desc,
+                started_at,
+            } => {
                 self.append_line(EntryKind::End, now, &old_desc)?;
                 self.accrue(started_at, now);
                 now + TimeDelta::seconds(1)
@@ -249,7 +255,8 @@ impl App {
                     KeyCode::Esc => { /* mode stays Normal – cancels the prompt */ }
 
                     KeyCode::Enter => {
-                        let desc = p.textarea
+                        let desc = p
+                            .textarea
                             .lines()
                             .first()
                             .map(|l| l.trim().to_lowercase())
@@ -266,11 +273,8 @@ impl App {
                         let next_idx = match p.history_idx {
                             None if !self.history.is_empty() => {
                                 // Capture the user's current typed text before navigating.
-                                p.saved_input = p.textarea
-                                    .lines()
-                                    .first()
-                                    .cloned()
-                                    .unwrap_or_default();
+                                p.saved_input =
+                                    p.textarea.lines().first().cloned().unwrap_or_default();
                                 Some(0)
                             }
                             Some(i) if i + 1 < self.history.len() => Some(i + 1),
@@ -278,8 +282,7 @@ impl App {
                         };
                         if next_idx != p.history_idx {
                             p.history_idx = next_idx;
-                            p.textarea =
-                                Self::make_textarea(&self.history[next_idx.unwrap()]);
+                            p.textarea = Self::make_textarea(&self.history[next_idx.unwrap()]);
                         }
                         self.mode = Mode::Prompting(p);
                     }
@@ -293,8 +296,7 @@ impl App {
                             }
                             Some(i) => {
                                 p.history_idx = Some(i - 1);
-                                p.textarea =
-                                    Self::make_textarea(&self.history[i - 1]);
+                                p.textarea = Self::make_textarea(&self.history[i - 1]);
                             }
                             None => {} // already at user's own input
                         }
@@ -398,7 +400,9 @@ impl App {
             Span::raw("  logged today  "),
             Span::styled(
                 format_duration(self.duration_today()),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -435,37 +439,51 @@ impl App {
 
         let hints: Line = match &self.mode {
             Mode::Prompting(_) => Line::from(vec![
-                key("↑↓"), txt("history"),
+                key("↑↓"),
+                txt("history"),
                 sep(),
-                key("enter"), txt("confirm"),
+                key("enter"),
+                txt("confirm"),
                 sep(),
-                key("esc"), txt("cancel"),
+                key("esc"),
+                txt("cancel"),
             ]),
             Mode::Normal => match &self.session {
                 SessionState::Active { .. } => Line::from(vec![
-                    key("space"), txt("pause"),
+                    key("space"),
+                    txt("pause"),
                     sep(),
-                    key("esc"), txt("end"),
+                    key("esc"),
+                    txt("end"),
                     sep(),
-                    key("enter"), txt("new task"),
+                    key("enter"),
+                    txt("new task"),
                     sep(),
-                    key("q"), txt("quit"),
+                    key("q"),
+                    txt("quit"),
                 ]),
                 SessionState::Paused { .. } => Line::from(vec![
-                    key("space"), txt("resume"),
+                    key("space"),
+                    txt("resume"),
                     sep(),
-                    key("esc"), txt("discard"),
+                    key("esc"),
+                    txt("discard"),
                     sep(),
-                    key("enter"), txt("new task"),
+                    key("enter"),
+                    txt("new task"),
                     sep(),
-                    key("q"), txt("quit"),
+                    key("q"),
+                    txt("quit"),
                 ]),
                 SessionState::Idle => Line::from(vec![
-                    key("enter"), txt("start"),
+                    key("enter"),
+                    txt("start"),
                     sep(),
-                    key("esc"), txt("quit"),
+                    key("esc"),
+                    txt("quit"),
                     sep(),
-                    key("q"), txt("quit"),
+                    key("q"),
+                    txt("quit"),
                 ]),
             },
         };
@@ -478,8 +496,11 @@ impl App {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn run(storage: FileStorage) -> Result<()> {
+pub fn run(storage: FileStorage, initial_desc: Option<String>) -> Result<()> {
     let mut app = App::new(storage)?;
+    if let Some(desc) = initial_desc {
+        app.start_session(&desc, Local::now().naive_local())?;
+    }
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();

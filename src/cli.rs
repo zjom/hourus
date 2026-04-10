@@ -58,8 +58,8 @@ pub enum Commands {
     /// Start a new session, auto-ending the current one if open.
     /// Ignores --from and --to.
     Start {
-        /// Description of the task being started.
-        desc: String,
+        /// Description of the task being started. Required unless --interactive is set.
+        desc: Option<String>,
 
         /// Start in interactive mode.
         #[arg(short, long)]
@@ -98,13 +98,16 @@ pub fn run() -> Result<()> {
 
             format.write_breakdown(stdout, &report.summarize(), report.total_duration())?;
         }
-        Some(Commands::Start { desc, interactive }) if *interactive => {
-            return tui::run(storage);
+        Some(Commands::Start { desc, interactive: true }) => {
+            return tui::run(storage, desc.clone());
         }
-        Some(Commands::Start { desc, .. }) => {
+        Some(Commands::Start { desc: Some(desc), .. }) => {
             let report = Report::new().with_lines(storage.load()?).build()?;
             let entries = report.build_start_entries(desc, Local::now().naive_local())?;
             storage.append(&entries)?;
+        }
+        Some(Commands::Start { desc: None, .. }) => {
+            anyhow::bail!("a description is required when not using --interactive");
         }
         Some(Commands::End {}) => {
             let report = Report::new().with_lines(storage.load()?).build()?;
