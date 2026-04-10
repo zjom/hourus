@@ -3,7 +3,7 @@ use crate::output::format_duration;
 use crate::report::Report;
 use crate::storage::{FileStorage, Storage};
 use anyhow::Result;
-use chrono::{Local, NaiveDateTime, TimeDelta};
+use chrono::{Local, Months, NaiveDate, NaiveDateTime, TimeDelta};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -15,6 +15,75 @@ use ratatui::{
 use ratatui_textarea::{CursorMove, TextArea};
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Timespan
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Timespan {
+    All,
+    Day1,
+    Day3,
+    Day7,
+    Month1,
+    Month3,
+    Year1,
+}
+
+impl Timespan {
+    const PRESETS: &'static [Self] = &[
+        Self::All,
+        Self::Day1,
+        Self::Day3,
+        Self::Day7,
+        Self::Month1,
+        Self::Month3,
+        Self::Year1,
+    ];
+
+    fn next(self) -> Self {
+        let idx = Self::PRESETS.iter().position(|&p| p == self).unwrap_or(0);
+        Self::PRESETS[(idx + 1) % Self::PRESETS.len()]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Day1 => "1d",
+            Self::Day3 => "3d",
+            Self::Day7 => "7d",
+            Self::Month1 => "1M",
+            Self::Month3 => "3M",
+            Self::Year1 => "1y",
+        }
+    }
+
+    /// Returns the `from` datetime for this span relative to `now`.
+    fn from_dt(self, now: NaiveDateTime) -> NaiveDateTime {
+        match self {
+            Self::All => NaiveDateTime::MIN,
+            Self::Day1 => now - TimeDelta::days(1),
+            Self::Day3 => now - TimeDelta::days(3),
+            Self::Day7 => now - TimeDelta::days(7),
+            Self::Month1 => now
+                .date()
+                .checked_sub_months(Months::new(1))
+                .unwrap_or(NaiveDate::MIN)
+                .and_time(now.time()),
+            Self::Month3 => now
+                .date()
+                .checked_sub_months(Months::new(3))
+                .unwrap_or(NaiveDate::MIN)
+                .and_time(now.time()),
+            Self::Year1 => now
+                .date()
+                .checked_sub_months(Months::new(12))
+                .unwrap_or(NaiveDate::MIN)
+                .and_time(now.time()),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -58,6 +127,10 @@ struct App {
     history_set: HashSet<String>,
     /// Completed-session time in the past 24 h, updated whenever a session ends/pauses.
     base_duration_today: TimeDelta,
+    /// All entry lines ever loaded or appended, used for summary computation.
+    all_lines: Vec<EntryLine>,
+    /// Timespan for the task summary panel.
+    summary_span: Timespan,
     exit: bool,
 }
 
@@ -87,7 +160,7 @@ impl App {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let base_duration_today = Report::new()
-            .with_lines(lines)
+            .with_lines(lines.clone())
             .from(since_today)
             .build()?
             .total_duration();
@@ -99,6 +172,8 @@ impl App {
             history,
             history_set,
             base_duration_today,
+            all_lines: lines,
+            summary_span: Timespan::All,
             exit: false,
         })
     }
@@ -133,6 +208,29 @@ impl App {
         self.base_duration_today + running
     }
 
+    /// Compute task summary for the current `summary_span`, including the running session.
+    fn compute_summary(&self) -> Vec<(String, TimeDelta)> {
+        let now = Local::now().naive_local();
+        let from = self.summary_span.from_dt(now);
+
+        let mut lines = self.all_lines.clone();
+        // Add a synthetic END so the running session appears in the summary.
+        if let SessionState::Active { desc, .. } = &self.session {
+            lines.push(EntryLine {
+                kind: EntryKind::End,
+                dt: now,
+                desc: desc.clone(),
+            });
+        }
+
+        Report::new()
+            .with_lines(lines)
+            .from(from)
+            .build()
+            .map(|r| r.summarize())
+            .unwrap_or_default()
+    }
+
     /// Create a styled textarea, pre-filled with `content` and cursor at end-of-line.
     fn make_textarea(content: &str) -> TextArea<'static> {
         let mut ta = TextArea::from([content.to_owned()]);
@@ -157,11 +255,14 @@ impl App {
     }
 
     fn append_line(&mut self, kind: EntryKind, dt: NaiveDateTime, desc: &str) -> Result<()> {
-        Ok(self.storage.append(&[EntryLine {
+        let entry = EntryLine {
             kind,
             dt,
             desc: desc.to_owned(),
-        }])?)
+        };
+        self.storage.append(&[entry.clone()])?;
+        self.all_lines.push(entry);
+        Ok(())
     }
 
     /// Account for a just-completed session interval in `base_duration_today`.
@@ -324,6 +425,7 @@ impl App {
 
             Mode::Normal => match key.code {
                 KeyCode::Char('q') => self.exit = true,
+                KeyCode::Char('s') => self.summary_span = self.summary_span.next(),
                 KeyCode::Char(' ') => self.toggle_pause()?,
                 KeyCode::Esc => self.end_or_quit()?,
                 KeyCode::Enter => self.mode = Mode::Prompting(self.open_prompt()),
@@ -362,6 +464,14 @@ impl App {
     }
 
     fn draw_normal(&self, frame: &mut Frame, area: Rect) {
+        // Horizontal split: session status on the left, task summary on the right.
+        let [status_area, summary_area] = Layout::horizontal([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .areas(area);
+
+        // --- Left: session status ---
         let mut lines: Vec<Line> = vec![Line::from("")];
 
         match &self.session {
@@ -414,6 +524,62 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
+
+        frame.render_widget(Paragraph::new(lines), status_area);
+
+        // --- Summary block ---
+        self.draw_summary(frame, summary_area);
+    }
+
+    fn draw_summary(&self, frame: &mut Frame, area: Rect) {
+        let summary = self.compute_summary();
+        let mut lines: Vec<Line> = vec![];
+
+        // Header row with span label.
+        lines.push(Line::from(vec![
+            Span::styled("  tasks ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("[{}]", self.summary_span.label()),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+
+        if summary.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  no entries",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            let total: TimeDelta = summary.iter().map(|(_, d)| *d).sum();
+            let max_name = summary.iter().map(|(s, _)| s.len()).max().unwrap_or(0);
+            // +2 gap between name column and duration column
+            let col_width = max_name + 2;
+
+            for (desc, dur) in &summary {
+                let pad = col_width - desc.len();
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::raw(desc.clone()),
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(format_duration(*dur), Style::default().fg(Color::Cyan)),
+                ]));
+            }
+
+            // Total row.
+            let total_label = "total";
+            let pad = col_width.saturating_sub(total_label.len());
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(total_label, Style::default().fg(Color::DarkGray)),
+                Span::raw(" ".repeat(pad)),
+                Span::styled(
+                    format_duration(total),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
 
         frame.render_widget(Paragraph::new(lines), area);
     }
@@ -468,6 +634,9 @@ impl App {
                     key("enter"),
                     txt("new task"),
                     sep(),
+                    key("s"),
+                    txt("span"),
+                    sep(),
                     key("q"),
                     txt("quit"),
                 ]),
@@ -481,12 +650,18 @@ impl App {
                     key("enter"),
                     txt("new task"),
                     sep(),
+                    key("s"),
+                    txt("span"),
+                    sep(),
                     key("q"),
                     txt("quit"),
                 ]),
                 SessionState::Idle => Line::from(vec![
                     key("enter"),
                     txt("start"),
+                    sep(),
+                    key("s"),
+                    txt("span"),
                     sep(),
                     key("esc"),
                     txt("quit"),
