@@ -3,7 +3,7 @@ use crate::output::format_duration;
 use crate::report::Report;
 use crate::storage::{FileStorage, Storage};
 use anyhow::Result;
-use chrono::{Local, NaiveDateTime, TimeDelta};
+use chrono::{Local, NaiveDateTime, TimeDelta, Timelike};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -78,10 +78,14 @@ impl App {
         let history = Self::build_history(&state_report.entry_lines);
 
         // Pre-compute completed session time for the past 24 h.
-        let since_24h = Local::now().naive_local() - TimeDelta::hours(24);
+        let since_today = Local::now()
+            .naive_local()
+            .date()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         let base_duration_today = Report::new()
             .with_lines(lines)
-            .from(since_24h)
+            .from(since_today)
             .build()?
             .total_duration();
 
