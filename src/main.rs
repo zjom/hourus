@@ -1,6 +1,7 @@
 mod cli;
 mod entry;
 mod error;
+mod history;
 mod output;
 mod report;
 mod storage;
