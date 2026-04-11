@@ -1,4 +1,5 @@
 use crate::entry::{EntryKind, EntryLine};
+use crate::history::StringHistoryList;
 use crate::output::format_duration;
 use crate::report::Report;
 use crate::storage::{FileStorage, Storage};
@@ -13,7 +14,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use ratatui_textarea::{CursorMove, TextArea};
-use std::collections::{HashSet, VecDeque};
+use std::rc::Rc;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -87,16 +88,20 @@ impl Timespan {
 
 // ---------------------------------------------------------------------------
 // State machine
+//
+// `desc` is `Rc<str>` rather than `String` so that the active/paused session
+// shares the same heap allocation as the entry in `history`.  Moving between
+// Active and Paused is then a reference-count bump, not a string copy.
 // ---------------------------------------------------------------------------
 
 enum SessionState {
     Idle,
     Active {
-        desc: String,
+        desc: Rc<str>,
         started_at: NaiveDateTime,
     },
     Paused {
-        desc: String,
+        desc: Rc<str>,
     },
 }
 
@@ -122,15 +127,24 @@ struct App {
     session: SessionState,
     mode: Mode,
     storage: FileStorage,
-    /// Unique task descriptions, most-recent-first. Built from START lines, deduped.
-    history: VecDeque<String>,
-    history_set: HashSet<String>,
+    history: StringHistoryList,
     /// Completed-session time in the past 24 h, updated whenever a session ends/pauses.
     base_duration_today: TimeDelta,
     /// All entry lines ever loaded or appended, used for summary computation.
     all_lines: Vec<EntryLine>,
     /// Timespan for the task summary panel.
     summary_span: Timespan,
+    /// Cached summary of *completed* sessions for `summary_span`.
+    ///
+    /// This covers only finished intervals and is therefore stable between
+    /// state transitions. `summary_for_display` merges it with the currently
+    /// running session's live duration at render time, which is cheap: it
+    /// clones a small Vec of unique task names rather than all of `all_lines`.
+    ///
+    /// Rebuilt eagerly on any transition that changes completed sessions
+    /// (pause, end, start-over-existing) and when `summary_span` changes.
+    /// Never rebuilt inside the 250 ms render loop.
+    summary_cache: Vec<(String, TimeDelta)>,
     exit: bool,
 }
 
@@ -143,15 +157,14 @@ impl App {
         // Determine current session state from the last entry line.
         let session = match state_report.entry_lines.last() {
             Some(last) if last.kind == EntryKind::Start => SessionState::Active {
-                desc: last.desc.clone(),
+                desc: Rc::from(last.desc.as_str()),
                 started_at: last.dt,
             },
             _ => SessionState::Idle,
         };
 
         // Build deduped history from all START lines, most-recent-first.
-        let mut history_set = HashSet::new();
-        let history = Self::build_history(&mut history_set, &state_report.entry_lines);
+        let history = Self::build_history(&state_report.entry_lines);
 
         // Pre-compute completed session time for the past 24 h.
         let since_today = Local::now()
@@ -165,35 +178,69 @@ impl App {
             .build()?
             .total_duration();
 
+        // Prime the summary cache for the default span (All).
+        let summary_cache = Self::build_summary_cache(&lines, Timespan::All);
+
         Ok(App {
             session,
             mode: Mode::Normal,
             storage,
             history,
-            history_set,
             base_duration_today,
             all_lines: lines,
             summary_span: Timespan::All,
+            summary_cache,
             exit: false,
         })
     }
 
     /// Build a deduplicated list of task descriptions (most-recent-first) from entry lines.
-    fn build_history(seen: &mut HashSet<String>, entry_lines: &[EntryLine]) -> VecDeque<String> {
+    fn build_history(entry_lines: &[EntryLine]) -> StringHistoryList {
         entry_lines
             .iter()
-            .rev()
             .filter(|l| l.kind == EntryKind::Start)
-            .filter_map(|l| seen.insert(l.desc.clone()).then(|| l.desc.clone()))
+            .map(|l| l.desc.as_str())
             .collect()
     }
 
-    /// Prepend `desc` to history, removing any prior occurrence so there are no duplicates.
-    fn push_history(&mut self, desc: &str) {
-        if !self.history_set.insert(desc.to_owned()) {
-            self.history.retain(|d| d != desc);
+    /// Compute the completed-sessions summary for `span` over `lines`.
+    /// Called only on state transitions and span changes, never during rendering.
+    fn build_summary_cache(lines: &[EntryLine], span: Timespan) -> Vec<(String, TimeDelta)> {
+        let from = span.from_dt(Local::now().naive_local());
+        Report::new()
+            .with_lines(lines.to_vec())
+            .from(from)
+            .build()
+            .map(|r| r.summarize())
+            .unwrap_or_default()
+    }
+
+    /// Rebuild `summary_cache` in place.  Called after any transition that
+    /// changes the set of completed sessions, and when `summary_span` changes.
+    fn rebuild_summary_cache(&mut self) {
+        self.summary_cache = Self::build_summary_cache(&self.all_lines, self.summary_span);
+    }
+
+    /// Summary ready for the display, merging the cache with the live running duration.
+    ///
+    /// Clones only `summary_cache` (a small Vec of unique task names), not `all_lines`.
+    fn summary_for_display(&self) -> Vec<(String, TimeDelta)> {
+        let SessionState::Active { desc, started_at } = &self.session else {
+            // No running session — the cache is the complete answer.
+            return self.summary_cache.clone();
+        };
+
+        let now = Local::now().naive_local();
+        // Clamp start to the span boundary so we don't count time outside the window.
+        let effective_start = (*started_at).max(self.summary_span.from_dt(now));
+        let running = (now - effective_start).max(TimeDelta::zero());
+
+        let mut result = self.summary_cache.clone();
+        match result.iter_mut().find(|(d, _)| d.as_str() == desc.as_ref()) {
+            Some(entry) => entry.1 = entry.1 + running,
+            None => result.push((desc.to_string(), running)),
         }
-        self.history.push_front(desc.to_owned());
+        result
     }
 
     /// Total logged in the past 24 h, including the currently running session.
@@ -206,29 +253,6 @@ impl App {
             _ => TimeDelta::zero(),
         };
         self.base_duration_today + running
-    }
-
-    /// Compute task summary for the current `summary_span`, including the running session.
-    fn compute_summary(&self) -> Vec<(String, TimeDelta)> {
-        let now = Local::now().naive_local();
-        let from = self.summary_span.from_dt(now);
-
-        let mut lines = self.all_lines.clone();
-        // Add a synthetic END so the running session appears in the summary.
-        if let SessionState::Active { desc, .. } = &self.session {
-            lines.push(EntryLine {
-                kind: EntryKind::End,
-                dt: now,
-                desc: desc.clone(),
-            });
-        }
-
-        Report::new()
-            .with_lines(lines)
-            .from(from)
-            .build()
-            .map(|r| r.summarize())
-            .unwrap_or_default()
     }
 
     /// Create a styled textarea, pre-filled with `content` and cursor at end-of-line.
@@ -286,12 +310,15 @@ impl App {
             SessionState::Active { desc, started_at } => {
                 self.append_line(EntryKind::End, now, &desc)?;
                 self.accrue(started_at, now);
-                self.session = SessionState::Paused { desc };
+                // A completed interval was added — rebuild the cache.
+                self.rebuild_summary_cache();
+                self.session = SessionState::Paused { desc }; // Rc move, no alloc
             }
             SessionState::Paused { desc } => {
                 self.append_line(EntryKind::Start, now, &desc)?;
+                // Resuming doesn't change completed sessions — cache stays valid.
                 self.session = SessionState::Active {
-                    desc,
+                    desc, // Rc move, no alloc
                     started_at: now,
                 };
             }
@@ -308,6 +335,8 @@ impl App {
             SessionState::Active { desc, started_at } => {
                 self.append_line(EntryKind::End, now, &desc)?;
                 self.accrue(started_at, now);
+                // A completed interval was added — rebuild the cache.
+                self.rebuild_summary_cache();
             }
             SessionState::Paused { .. } => { /* discard, session stays Idle */ }
             SessionState::Idle => self.exit = true,
@@ -317,6 +346,11 @@ impl App {
 
     /// Start a new session with `desc`, ending the current one first if necessary.
     fn start_session(&mut self, desc: &str, now: NaiveDateTime) -> Result<()> {
+        // Push to history first, then borrow the interned Rc so that
+        // SessionState::Active shares the same allocation — no second copy.
+        self.history.push_str(desc);
+        let desc_rc: Rc<str> = self.history.iter().next().unwrap().clone(); // refcount bump only
+
         let prev = std::mem::replace(&mut self.session, SessionState::Idle);
         let start_dt = match prev {
             SessionState::Active {
@@ -325,14 +359,15 @@ impl App {
             } => {
                 self.append_line(EntryKind::End, now, &old_desc)?;
                 self.accrue(started_at, now);
+                // A completed interval was added — rebuild the cache.
+                self.rebuild_summary_cache();
                 now + TimeDelta::seconds(1)
             }
             _ => now,
         };
-        self.append_line(EntryKind::Start, start_dt, desc)?;
-        self.push_history(desc);
+        self.append_line(EntryKind::Start, start_dt, &desc_rc)?;
         self.session = SessionState::Active {
-            desc: desc.to_owned(),
+            desc: desc_rc, // shared Rc, no heap allocation
             started_at: start_dt,
         };
         Ok(())
@@ -425,7 +460,12 @@ impl App {
 
             Mode::Normal => match key.code {
                 KeyCode::Char('q') => self.exit = true,
-                KeyCode::Char('s') => self.summary_span = self.summary_span.next(),
+                KeyCode::Char('s') => {
+                    self.summary_span = self.summary_span.next();
+                    // Span changed — completed-session totals are now over a different
+                    // window, so the cache is stale.
+                    self.rebuild_summary_cache();
+                }
                 KeyCode::Char(' ') => self.toggle_pause()?,
                 KeyCode::Esc => self.end_or_quit()?,
                 KeyCode::Enter => self.mode = Mode::Prompting(self.open_prompt()),
@@ -465,11 +505,9 @@ impl App {
 
     fn draw_normal(&self, frame: &mut Frame, area: Rect) {
         // Horizontal split: session status on the left, task summary on the right.
-        let [status_area, summary_area] = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .areas(area);
+        let [status_area, summary_area] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(area);
 
         // --- Left: session status ---
         let mut lines: Vec<Line> = vec![Line::from("")];
@@ -479,7 +517,10 @@ impl App {
                 let elapsed = Local::now().naive_local() - *started_at;
                 lines.push(Line::from(vec![
                     Span::styled("  ● ", Style::default().fg(Color::Green)),
-                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        desc.to_string(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
                     Span::raw("    started "),
@@ -494,7 +535,10 @@ impl App {
             SessionState::Paused { desc } => {
                 lines.push(Line::from(vec![
                     Span::styled("  ⏸ ", Style::default().fg(Color::Yellow)),
-                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        desc.to_string(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled("  (paused)", Style::default().fg(Color::DarkGray)),
                 ]));
                 lines.push(Line::from(Span::styled(
@@ -527,12 +571,13 @@ impl App {
 
         frame.render_widget(Paragraph::new(lines), status_area);
 
-        // --- Summary block ---
-        self.draw_summary(frame, summary_area);
+        // Compute the display summary once and pass it down, rather than
+        // having draw_summary recompute it independently.
+        let summary = self.summary_for_display();
+        self.draw_summary(frame, summary_area, &summary);
     }
 
-    fn draw_summary(&self, frame: &mut Frame, area: Rect) {
-        let summary = self.compute_summary();
+    fn draw_summary(&self, frame: &mut Frame, area: Rect, summary: &[(String, TimeDelta)]) {
         let mut lines: Vec<Line> = vec![];
 
         // Header row with span label.
@@ -555,7 +600,7 @@ impl App {
             // +2 gap between name column and duration column
             let col_width = max_name + 2;
 
-            for (desc, dur) in &summary {
+            for (desc, dur) in summary {
                 let pad = col_width - desc.len();
                 lines.push(Line::from(vec![
                     Span::raw("  "),
