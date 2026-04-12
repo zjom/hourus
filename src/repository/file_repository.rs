@@ -1,27 +1,13 @@
-use crate::entry::{Entry, EntryKind, EntryLine, Interval};
-use crate::error::StorageError;
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, TimeDelta, Utc};
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[derive(Default, Clone)]
-pub struct QueryOpts {
-    pub from: Option<DateTime<Utc>>,
-    pub to: Option<DateTime<Utc>>,
-    pub limit: Option<usize>,
-    pub offset: Option<usize>,
-}
-
-pub trait Repository {
-    fn list(&self, opts: QueryOpts) -> Result<Vec<&Entry>, StorageError>;
-
-    fn start_session(&mut self, desc: &str, dt: DateTime<Utc>) -> Result<()>;
-
-    fn end_session(&mut self, dt: DateTime<Utc>) -> Result<()>;
-}
+use crate::entry::{Entry, EntryKind, EntryLine, Interval};
+use crate::error::StorageError;
+use crate::repository::repository::{QueryOpts, Repository};
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, TimeDelta, Utc};
+use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 
 /// File-backed repository of time-tracking entries.
 ///
