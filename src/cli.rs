@@ -1,13 +1,13 @@
 use anyhow::Result;
-use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use std::env;
 use std::io;
 use std::path::PathBuf;
 
 use crate::output::OutputFormat;
-use crate::report::Report;
-use crate::storage::{FileStorage, Storage};
+use crate::repository::{FileRepository, QueryOpts};
+use crate::service::{SessionService, summarize};
 use crate::tui;
 
 /// Parses and summarises .hours log files.
@@ -85,56 +85,51 @@ pub fn run() -> Result<()> {
         }
     });
 
-    let mut storage = FileStorage::new(path);
+    let mut service = SessionService::new(FileRepository::new(path)?)?;
     let stdout = &mut io::stdout();
 
     match &cli.command {
         Some(Commands::Breakdown { from, to, format }) => {
-            let report = Report::new()
-                .with_lines(storage.load()?)
-                .from(date_start(from))
-                .to(date_end(to))
-                .build()?;
-
-            format.write_breakdown(stdout, &report.summarize(), report.total_duration())?;
+            let entries = service.list(QueryOpts {
+                from: from.map(date_start),
+                to: to.map(date_end),
+                ..Default::default()
+            })?;
+            let summary = summarize(&entries);
+            let total = summary.iter().map(|(_, d)| *d).sum();
+            format.write_breakdown(stdout, &summary, total)?;
         }
-        Some(Commands::Start { desc, interactive: true }) => {
-            return tui::run(storage, desc.clone());
-        }
-        Some(Commands::Start { desc: Some(desc), .. }) => {
-            let report = Report::new().with_lines(storage.load()?).build()?;
-            let entries = report.build_start_entries(desc, Local::now().naive_local())?;
-            storage.append(&entries)?;
-        }
+        Some(Commands::Start {
+            desc,
+            interactive: true,
+        }) => tui::run(service, desc.clone())?,
+        Some(Commands::Start {
+            desc: Some(desc), ..
+        }) => service.start(desc, Utc::now())?,
         Some(Commands::Start { desc: None, .. }) => {
             anyhow::bail!("a description is required when not using --interactive");
         }
-        Some(Commands::End {}) => {
-            let report = Report::new().with_lines(storage.load()?).build()?;
-            let entry = report.build_end_entry(Local::now().naive_local())?;
-            storage.append(&[entry])?;
-        }
+        Some(Commands::End {}) => service.end(Utc::now())?,
         None => {
-            let report = Report::new()
-                .with_lines(storage.load()?)
-                .from(date_start(&cli.from))
-                .to(date_end(&cli.to))
-                .build()?;
-
-            cli.format.write_total(stdout, report.total_duration())?
+            let entries = service.list(QueryOpts {
+                from: cli.from.map(date_start),
+                to: cli.to.map(date_end),
+                ..Default::default()
+            })?;
+            let total = summarize(&entries).iter().map(|(_, d)| *d).sum();
+            cli.format.write_total(stdout, total)?
         }
     }
 
     Ok(())
 }
 
-/// Resolve an optional date to the start of that day (or the minimum date if absent).
-fn date_start(date: &Option<NaiveDate>) -> NaiveDateTime {
-    date.unwrap_or(NaiveDate::MIN).and_time(NaiveTime::MIN)
+/// Resolve a date to the start of that day in UTC.
+fn date_start(date: NaiveDate) -> chrono::DateTime<Utc> {
+    Utc.from_utc_datetime(&date.and_time(NaiveTime::MIN))
 }
 
-/// Resolve an optional date to the last second of that day (or today if absent).
-fn date_end(date: &Option<NaiveDate>) -> NaiveDateTime {
-    date.unwrap_or_else(|| Local::now().date_naive())
-        .and_time(NaiveTime::from_hms_opt(23, 59, 59).unwrap())
+/// Resolve a date to the last second of that day in UTC.
+fn date_end(date: NaiveDate) -> chrono::DateTime<Utc> {
+    Utc.from_utc_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
 }

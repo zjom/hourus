@@ -1,5 +1,5 @@
 use crate::error::ParseError;
-use chrono::{NaiveDateTime, TimeDelta};
+use chrono::{DateTime, Local, NaiveDateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -33,7 +33,7 @@ impl FromStr for EntryKind {
 pub struct EntryLine {
     pub kind: EntryKind,
     pub desc: String,
-    pub dt: NaiveDateTime,
+    pub dt: DateTime<Utc>,
 }
 
 impl fmt::Display for EntryLine {
@@ -59,22 +59,24 @@ impl FromStr for EntryLine {
         let dt_str = data[1].trim();
         // TODO this is very hacky.
         // Should probably pass in format specifier from user config
-        let dt: NaiveDateTime = NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
-            .or_else(|_| NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S"))?;
+        let dt = NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S"))?
+            .and_utc();
         let desc = data[2].trim().to_lowercase().to_owned();
 
-        Ok(EntryLine { kind, desc, dt })
+        Ok(EntryLine { kind, desc, dt: dt })
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Interval {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: DateTime<Utc>,
+    pub end: Option<DateTime<Utc>>,
 }
 impl Interval {
     pub fn duration(&self) -> TimeDelta {
-        self.end - self.start
+        let end = self.end.unwrap_or(Local::now().to_utc());
+        end - self.start
     }
 }
 
@@ -100,7 +102,7 @@ impl Entry {
             desc: a.desc.to_owned(),
             interval: Interval {
                 start: a.dt,
-                end: b.dt,
+                end: Some(b.dt),
             },
         })
     }
@@ -110,11 +112,13 @@ impl Entry {
 mod tests {
     use super::*;
 
-    fn parse_dt(s: &str) -> NaiveDateTime {
-        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap()
+    fn parse_dt(s: &str) -> DateTime<Utc> {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .unwrap()
+            .and_utc()
     }
 
-    fn base_dt() -> NaiveDateTime {
+    fn base_dt() -> DateTime<Utc> {
         parse_dt("2015-09-05 23:56:04")
     }
 
@@ -282,7 +286,7 @@ mod tests {
     fn interval_duration_is_correct() {
         let interval = Interval {
             start: parse_dt("2024-01-01 09:00:00"),
-            end: parse_dt("2024-01-01 10:30:00"),
+            end: Some(parse_dt("2024-01-01 10:30:00")),
         };
         assert_eq!(interval.duration().num_minutes(), 90);
     }
@@ -290,7 +294,10 @@ mod tests {
     #[test]
     fn interval_duration_zero_when_start_equals_end() {
         let d = parse_dt("2024-01-01 09:00:00");
-        let interval = Interval { start: d, end: d };
+        let interval = Interval {
+            start: d,
+            end: Some(d),
+        };
         assert_eq!(interval.duration().num_seconds(), 0);
     }
 
@@ -301,7 +308,7 @@ mod tests {
         let entry = Entry::new(&start_line(), &end_line()).unwrap();
         assert_eq!(entry.desc, "desc");
         assert_eq!(entry.interval.start, base_dt());
-        assert_eq!(entry.interval.end, end_line().dt);
+        assert_eq!(entry.interval.end, Some(end_line().dt));
     }
 
     #[test]

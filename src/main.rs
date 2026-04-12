@@ -3,8 +3,8 @@ mod entry;
 mod error;
 mod history;
 mod output;
-mod report;
-mod storage;
+mod repository;
+mod service;
 mod tui;
 
 use std::process;
