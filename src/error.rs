@@ -27,6 +27,9 @@ pub enum StorageError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("sqlite error: {0}")]
+    SqliteError(#[from] rusqlite::Error),
+
     #[error("parse error: {0}")]
     Parse(#[from] ParseError),
 }
