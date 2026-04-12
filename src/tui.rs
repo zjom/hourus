@@ -139,7 +139,7 @@ impl<R: Repository> App<R> {
                 .map(|e| e.interval.duration())
                 .sum();
 
-            let summary_cache = summarize(&entries);
+            let summary_cache = summarize(entries.as_slice());
 
             (desc_history, base_duration_today, summary_cache)
         };
@@ -407,7 +407,10 @@ impl<R: Repository> App<R> {
     fn draw(&self, frame: &mut Frame) {
         let area = frame.area();
         let now = Utc::now();
-        let clock = now.with_timezone(&Local).format("%Y-%m-%d  %H:%M:%S").to_string();
+        let clock = now
+            .with_timezone(&Local)
+            .format("%Y-%m-%d  %H:%M:%S")
+            .to_string();
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -442,10 +445,7 @@ impl<R: Repository> App<R> {
                 let local_start = started_at.with_timezone(&Local);
                 lines.push(Line::from(vec![
                     Span::styled("  ● ", Style::default().fg(Color::Green)),
-                    Span::styled(
-                        desc.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
                 ]));
                 lines.push(Line::from(vec![
                     Span::raw("    started "),
@@ -460,10 +460,7 @@ impl<R: Repository> App<R> {
             SessionStatus::Paused { desc } => {
                 lines.push(Line::from(vec![
                     Span::styled("  ⏸ ", Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        desc.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled("  (paused)", Style::default().fg(Color::DarkGray)),
                 ]));
                 lines.push(Line::from(Span::styled(
@@ -643,7 +640,10 @@ impl<R: Repository> App<R> {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn run<R: Repository>(mut service: SessionService<R>, initial_desc: Option<String>) -> Result<()> {
+pub fn run<R: Repository>(
+    mut service: SessionService<R>,
+    initial_desc: Option<String>,
+) -> Result<()> {
     if let Some(ref desc) = initial_desc {
         service.start(desc, Utc::now())?;
     }

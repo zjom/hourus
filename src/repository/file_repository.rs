@@ -98,7 +98,7 @@ impl FileRepository {
 }
 
 impl Repository for FileRepository {
-    fn list(&self, opts: QueryOpts) -> Result<Vec<&Entry>, StorageError> {
+    fn list(&self, opts: QueryOpts) -> Result<Vec<Entry>, StorageError> {
         Ok(self
             .entries
             .iter()
@@ -108,6 +108,7 @@ impl Repository for FileRepository {
             })
             .skip(opts.offset.unwrap_or(0))
             .take(opts.limit.unwrap_or(usize::MAX))
+            .map(|e| e.to_owned())
             .collect())
     }
 

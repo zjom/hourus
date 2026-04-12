@@ -12,7 +12,7 @@ pub struct QueryOpts {
 }
 
 pub trait Repository {
-    fn list(&self, opts: QueryOpts) -> Result<Vec<&Entry>, StorageError>;
+    fn list(&self, opts: QueryOpts) -> Result<Vec<Entry>, StorageError>;
 
     fn start_session(&mut self, desc: &str, dt: DateTime<Utc>) -> Result<()>;
 

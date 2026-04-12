@@ -118,7 +118,7 @@ impl<R: Repository> SessionService<R> {
     }
 
     /// Return all entries that satisfy `opts`, borrowing from the repository.
-    pub fn list(&self, opts: QueryOpts) -> Result<Vec<&Entry>, StorageError> {
+    pub fn list(&self, opts: QueryOpts) -> Result<Vec<Entry>, StorageError> {
         self.repo.list(opts)
     }
 }
@@ -128,7 +128,7 @@ impl<R: Repository> SessionService<R> {
 // ---------------------------------------------------------------------------
 
 /// Aggregate completed entries by description, sorted by total duration desc.
-pub fn summarize(entries: &[&Entry]) -> Vec<(String, TimeDelta)> {
+pub fn summarize(entries: &[Entry]) -> Vec<(String, TimeDelta)> {
     use std::collections::HashMap;
     let mut map: HashMap<&str, TimeDelta> = HashMap::new();
     for e in entries {

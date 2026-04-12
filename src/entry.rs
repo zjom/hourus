@@ -68,7 +68,7 @@ impl FromStr for EntryLine {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct Interval {
     pub start: DateTime<Utc>,
     pub end: Option<DateTime<Utc>>,
@@ -80,7 +80,7 @@ impl Interval {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entry {
     pub desc: String,
     pub interval: Interval,
