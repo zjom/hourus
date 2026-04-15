@@ -19,7 +19,7 @@ use crate::tui;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Path to the .hours file.
+    /// Path to the .hours file (or sqlite db if compiled with sqlite feature).
     /// Falls back to the HOURUS_DEFAULT_FILE environment variable unless --no-env is set.
     #[arg(short, long)]
     pub path: Option<String>,

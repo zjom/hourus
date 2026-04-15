@@ -9,7 +9,7 @@ hourus [OPTIONS] [COMMAND]
 ```
 
 **Global options:**
-- `--path <PATH>` — Path to `.hours` log file. Falls back to `HOURUS_DEFAULT_FILE` env var, then stdin.
+- `--path <PATH>` — Path to `.hours` log file (or sqlite db if compiled with sqlite feature). Falls back to `HOURUS_DEFAULT_FILE` env var, then stdin.
 - `--no-env` — Ignore the `HOURUS_DEFAULT_FILE` environment variable.
 - `--from <DATE>` — Only include entries on or after this date (`YYYY-MM-DD`).
 - `--to <DATE>` — Only include entries on or before this date (`YYYY-MM-DD`).
