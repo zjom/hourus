@@ -59,7 +59,7 @@ impl Timespan {
     }
 
     /// Lower bound for this span relative to `now`. `None` means all time.
-    fn from_dt(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    fn lower_bound(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self {
             Self::All => None,
             Self::Day1 => Some(now - TimeDelta::days(1)),
@@ -387,7 +387,7 @@ impl<R: Repository> App<R> {
                 KeyCode::Char('q') => self.exit = true,
                 KeyCode::Char('s') => {
                     self.summary_span = self.summary_span.next();
-                    let from = self.summary_span.from_dt(Utc::now());
+                    let from = self.summary_span.lower_bound(Utc::now());
                     self.set_summary_window(from);
                 }
                 KeyCode::Char(' ') => self.toggle_pause()?,
