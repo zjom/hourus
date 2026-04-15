@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use crate::entry::{Entry, EntryKind, EntryLine, Interval};
 use crate::error::StorageError;
-use crate::repository::repository::{QueryOpts, Repository};
+use crate::repository::{QueryOpts, Repository};
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -75,16 +75,17 @@ impl FileRepository {
         let mut writer: Box<dyn Write> = match &self.path {
             Some(path) => {
                 if let Ok(metadata) = fs::metadata(path)
-                    && metadata.len() > 0 {
-                        let mut file = fs::File::open(path)?;
-                        file.seek(io::SeekFrom::End(-1))?;
-                        let mut buf = [0u8; 1];
-                        file.read_exact(&mut buf)?;
-                        if buf[0] != b'\n' {
-                            let mut f = fs::OpenOptions::new().append(true).open(path)?;
-                            writeln!(f)?;
-                        }
+                    && metadata.len() > 0
+                {
+                    let mut file = fs::File::open(path)?;
+                    file.seek(io::SeekFrom::End(-1))?;
+                    let mut buf = [0u8; 1];
+                    file.read_exact(&mut buf)?;
+                    if buf[0] != b'\n' {
+                        let mut f = fs::OpenOptions::new().append(true).open(path)?;
+                        writeln!(f)?;
                     }
+                }
                 Box::new(fs::OpenOptions::new().append(true).open(path)?)
             }
             None => Box::new(io::stdout()),
