@@ -6,6 +6,9 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::output::OutputFormat;
+use crate::repository::Repository;
+#[cfg(feature = "sqlite")]
+use crate::repository::SqliteRepository;
 use crate::repository::{FileRepository, QueryOpts};
 use crate::service::{SessionService, summarize};
 use crate::tui;
@@ -72,6 +75,24 @@ pub enum Commands {
 
 static ENV_KEY: &str = "HOURUS_DEFAULT_FILE";
 
+#[cfg(feature = "sqlite")]
+fn repo_for_path(p: PathBuf) -> Result<Box<dyn Repository>> {
+    let is_db = p
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map_or(false, |ext| ["db", "sqlite"].contains(&ext));
+    if is_db {
+        Ok(Box::new(SqliteRepository::new(p)?))
+    } else {
+        Ok(Box::new(FileRepository::new(Some(p))?))
+    }
+}
+
+#[cfg(not(feature = "sqlite"))]
+fn repo_for_path(p: PathBuf) -> Result<Box<dyn Repository>> {
+    Ok(Box::new(FileRepository::new(Some(p))?))
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -84,8 +105,12 @@ pub fn run() -> Result<()> {
             env::var(ENV_KEY).ok().map(PathBuf::from)
         }
     });
+    let repo: Box<dyn Repository> = match path {
+        Some(p) => repo_for_path(p)?,
+        None => Box::new(FileRepository::new(None)?),
+    };
 
-    let mut service = SessionService::new(FileRepository::new(path)?)?;
+    let mut service = SessionService::new(repo)?;
     let stdout = &mut io::stdout();
 
     match &cli.command {

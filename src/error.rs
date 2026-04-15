@@ -27,6 +27,7 @@ pub enum StorageError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[cfg(feature = "sqlite")]
     #[error("sqlite error: {0}")]
     SqliteError(#[from] rusqlite::Error),
 
