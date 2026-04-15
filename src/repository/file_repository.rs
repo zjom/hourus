@@ -43,7 +43,7 @@ impl FileRepository {
             })
             .collect::<Result<_, _>>()?;
 
-        let (pairs, tail) = if lines.last().map_or(false, |l| l.kind == EntryKind::Start) {
+        let (pairs, tail) = if lines.last().is_some_and(|l| l.kind == EntryKind::Start) {
             (&lines[..lines.len() - 1], lines.last())
         } else {
             (&lines[..], None)
@@ -74,8 +74,8 @@ impl FileRepository {
     fn append_lines(&self, lines: &[EntryLine]) -> Result<(), StorageError> {
         let mut writer: Box<dyn Write> = match &self.path {
             Some(path) => {
-                if let Ok(metadata) = fs::metadata(path) {
-                    if metadata.len() > 0 {
+                if let Ok(metadata) = fs::metadata(path)
+                    && metadata.len() > 0 {
                         let mut file = fs::File::open(path)?;
                         file.seek(io::SeekFrom::End(-1))?;
                         let mut buf = [0u8; 1];
@@ -85,7 +85,6 @@ impl FileRepository {
                             writeln!(f)?;
                         }
                     }
-                }
                 Box::new(fs::OpenOptions::new().append(true).open(path)?)
             }
             None => Box::new(io::stdout()),

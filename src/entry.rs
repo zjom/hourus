@@ -64,7 +64,7 @@ impl FromStr for EntryLine {
             .and_utc();
         let desc = data[2].trim().to_lowercase().to_owned();
 
-        Ok(EntryLine { kind, desc, dt: dt })
+        Ok(EntryLine { kind, desc, dt })
     }
 }
 
