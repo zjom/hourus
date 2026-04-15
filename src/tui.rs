@@ -97,7 +97,7 @@ struct PromptState {
 
 enum Mode {
     Normal,
-    Prompting(PromptState),
+    Prompting(Box<PromptState>),
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +156,12 @@ impl<R: Repository> App<R> {
         })
     }
 
-    fn open_prompt(&self) -> PromptState {
-        PromptState {
+    fn open_prompt(&self) -> Box<PromptState> {
+        Box::new(PromptState {
             textarea: Self::make_textarea(""),
             saved_input: String::new(),
             history_idx: None,
-        }
+        })
     }
 
     /// Create a styled textarea pre-filled with `content`, cursor at end-of-line.
