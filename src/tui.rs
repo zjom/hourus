@@ -306,9 +306,10 @@ impl<R: Repository> App<R> {
             terminal.draw(|f| self.draw(f))?;
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
-                    && key.kind == KeyEventKind::Press {
-                        self.handle_key(key)?;
-                    }
+                && key.kind == KeyEventKind::Press
+            {
+                self.handle_key(key)?;
+            }
         }
         Ok(())
     }
