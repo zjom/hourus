@@ -46,6 +46,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Interactive TUI
+    #[command(alias = "i")]
+    Interactive {
+        /// Start the TUI with task of desc
+        desc: Option<String>,
+    },
     /// Print a breakdown of hours by task.
     Breakdown {
         #[arg(short, long)]
@@ -61,12 +67,8 @@ pub enum Commands {
     /// Start a new session, auto-ending the current one if open.
     /// Ignores --from and --to.
     Start {
-        /// Description of the task being started. Required unless --interactive is set.
-        desc: Option<String>,
-
-        /// Start in interactive mode.
-        #[arg(short, long)]
-        interactive: bool,
+        /// Description of the task being started.
+        desc: String,
     },
     /// End the current session. Fails if no session is ongoing.
     /// Ignores --from and --to.
@@ -124,16 +126,8 @@ pub fn run() -> Result<()> {
             let total = summary.iter().map(|(_, d)| *d).sum();
             format.write_breakdown(stdout, &summary, total)?;
         }
-        Some(Commands::Start {
-            desc,
-            interactive: true,
-        }) => tui::run(service, desc.clone())?,
-        Some(Commands::Start {
-            desc: Some(desc), ..
-        }) => service.start(desc, Utc::now())?,
-        Some(Commands::Start { desc: None, .. }) => {
-            anyhow::bail!("a description is required when not using --interactive");
-        }
+        Some(Commands::Interactive { desc }) => tui::run(service, desc.clone())?,
+        Some(Commands::Start { desc }) => service.start(desc, Utc::now())?,
         Some(Commands::End {}) => service.end(Utc::now())?,
         None => {
             let entries = service.list(QueryOpts {
