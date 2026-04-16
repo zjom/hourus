@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -24,7 +24,14 @@ pub struct FileRepository {
 impl FileRepository {
     pub fn new(path: Option<PathBuf>) -> anyhow::Result<FileRepository> {
         let reader: Box<dyn io::Read> = match &path {
-            Some(p) => Box::new(fs::File::open(p)?),
+            Some(p) => Box::new(
+                OpenOptions::new()
+                    .read(true)
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(p)?,
+            ),
             None => Box::new(io::stdin()),
         };
 
