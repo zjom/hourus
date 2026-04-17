@@ -101,6 +101,32 @@ impl<R: Repository> SessionService<R> {
         Ok(())
     }
 
+    /// Rename the current active or paused session.
+    ///
+    /// For an active session the elapsed time is preserved: the open entry is
+    /// closed at its original start time (0-duration) and a new one is opened
+    /// at the same instant with the new description.
+    /// For a paused session only the in-memory label is updated; the
+    /// already-written entry keeps its old description.
+    pub fn rename(&mut self, new_desc: &str) -> Result<()> {
+        match &self.status {
+            SessionStatus::Active { started_at, .. } => {
+                self.repo.rename_current(new_desc)?;
+                self.status = SessionStatus::Active {
+                    desc: new_desc.to_owned(),
+                    started_at: *started_at,
+                };
+            }
+            SessionStatus::Paused { .. } => {
+                self.status = SessionStatus::Paused {
+                    desc: new_desc.to_owned(),
+                };
+            }
+            SessionStatus::Idle => {}
+        }
+        Ok(())
+    }
+
     /// Discard a paused session. No file write — the END line was already
     /// written when the session was paused.
     pub fn discard_paused(&mut self) {

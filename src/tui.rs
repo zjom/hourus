@@ -93,11 +93,14 @@ struct PromptState {
     /// Index into desc_history while navigating; `None` means the user's own
     /// input is shown.
     history_idx: Option<usize>,
+    /// Block title shown on the textarea border.
+    title: &'static str,
 }
 
 enum Mode {
     Normal,
     Prompting(Box<PromptState>),
+    Renaming(Box<PromptState>),
 }
 
 // ---------------------------------------------------------------------------
@@ -158,14 +161,28 @@ impl<R: Repository> App<R> {
 
     fn open_prompt(&self) -> Box<PromptState> {
         Box::new(PromptState {
-            textarea: Self::make_textarea(""),
+            textarea: Self::make_textarea("", " new session "),
             saved_input: String::new(),
             history_idx: None,
+            title: " new session ",
         })
     }
 
+    fn open_rename_prompt(&self) -> Option<Box<PromptState>> {
+        let current_desc = match self.service.status() {
+            SessionStatus::Active { desc, .. } | SessionStatus::Paused { desc } => desc.clone(),
+            SessionStatus::Idle => return None,
+        };
+        Some(Box::new(PromptState {
+            textarea: Self::make_textarea(&current_desc, " rename session "),
+            saved_input: current_desc,
+            history_idx: None,
+            title: " rename session ",
+        }))
+    }
+
     /// Create a styled textarea pre-filled with `content`, cursor at end-of-line.
-    fn make_textarea(content: &str) -> TextArea<'static> {
+    fn make_textarea(content: &str, title: &'static str) -> TextArea<'static> {
         let mut ta = TextArea::from([content.to_owned()]);
         ta.set_placeholder_text("task description...");
         ta.set_cursor_line_style(Style::default());
@@ -173,7 +190,7 @@ impl<R: Repository> App<R> {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(" new session "),
+                .title(title),
         );
         ta.move_cursor(CursorMove::End);
         ta
@@ -353,7 +370,8 @@ impl<R: Repository> App<R> {
                         };
                         if next_idx != p.history_idx {
                             p.history_idx = next_idx;
-                            p.textarea = Self::make_textarea(&content.unwrap_or_default());
+                            p.textarea =
+                                Self::make_textarea(&content.unwrap_or_default(), p.title);
                         }
                         self.mode = Mode::Prompting(p);
                     }
@@ -363,12 +381,12 @@ impl<R: Repository> App<R> {
                             Some(0) => {
                                 p.history_idx = None;
                                 let saved = p.saved_input.clone();
-                                p.textarea = Self::make_textarea(&saved);
+                                p.textarea = Self::make_textarea(&saved, p.title);
                             }
                             Some(i) => {
                                 let content = self.desc_history[i - 1].to_owned();
                                 p.history_idx = Some(i - 1);
-                                p.textarea = Self::make_textarea(&content);
+                                p.textarea = Self::make_textarea(&content, p.title);
                             }
                             None => {}
                         }
@@ -383,8 +401,80 @@ impl<R: Repository> App<R> {
                 }
             }
 
+            Mode::Renaming(mut p) => {
+                match key.code {
+                    KeyCode::Esc => { /* mode stays Normal – cancels the rename */ }
+
+                    KeyCode::Enter => {
+                        let desc = p
+                            .textarea
+                            .lines()
+                            .first()
+                            .map(|l| l.trim().to_lowercase())
+                            .unwrap_or_default();
+                        if !desc.is_empty() {
+                            self.rename_session(&desc)?;
+                            // mode stays Normal
+                        } else {
+                            self.mode = Mode::Renaming(p);
+                        }
+                    }
+
+                    KeyCode::Up => {
+                        let (next_idx, content) = {
+                            let history = &self.desc_history;
+                            let next_idx = match p.history_idx {
+                                None if !history.is_empty() => {
+                                    p.saved_input =
+                                        p.textarea.lines().first().cloned().unwrap_or_default();
+                                    Some(0)
+                                }
+                                Some(i) if i + 1 < history.len() => Some(i + 1),
+                                other => other,
+                            };
+                            let content = next_idx.map(|i| history[i].to_owned());
+                            (next_idx, content)
+                        };
+                        if next_idx != p.history_idx {
+                            p.history_idx = next_idx;
+                            p.textarea =
+                                Self::make_textarea(&content.unwrap_or_default(), p.title);
+                        }
+                        self.mode = Mode::Renaming(p);
+                    }
+
+                    KeyCode::Down => {
+                        match p.history_idx {
+                            Some(0) => {
+                                p.history_idx = None;
+                                let saved = p.saved_input.clone();
+                                p.textarea = Self::make_textarea(&saved, p.title);
+                            }
+                            Some(i) => {
+                                let content = self.desc_history[i - 1].to_owned();
+                                p.history_idx = Some(i - 1);
+                                p.textarea = Self::make_textarea(&content, p.title);
+                            }
+                            None => {}
+                        }
+                        self.mode = Mode::Renaming(p);
+                    }
+
+                    _ => {
+                        p.history_idx = None;
+                        p.textarea.input(key);
+                        self.mode = Mode::Renaming(p);
+                    }
+                }
+            }
+
             Mode::Normal => match key.code {
                 KeyCode::Char('q') => self.exit = true,
+                KeyCode::Char('r') => {
+                    if let Some(p) = self.open_rename_prompt() {
+                        self.mode = Mode::Renaming(p);
+                    }
+                }
                 KeyCode::Char('s') => {
                     self.summary_span = self.summary_span.next();
                     let from = self.summary_span.lower_bound(Utc::now());
@@ -396,6 +486,13 @@ impl<R: Repository> App<R> {
                 _ => {}
             },
         }
+        Ok(())
+    }
+
+    fn rename_session(&mut self, new_desc: &str) -> Result<()> {
+        self.service.rename(new_desc)?;
+        self.desc_history.push_str(new_desc);
+        self.rebuild_summary_cache();
         Ok(())
     }
 
@@ -425,7 +522,7 @@ impl<R: Repository> App<R> {
 
         match &self.mode {
             Mode::Normal => self.draw_normal(frame, content, now),
-            Mode::Prompting(p) => self.draw_prompting(frame, content, p),
+            Mode::Prompting(p) | Mode::Renaming(p) => self.draw_prompting(frame, content, p),
         }
         self.draw_hints(frame, hints);
     }
@@ -582,6 +679,16 @@ impl<R: Repository> App<R> {
                 key("esc"),
                 txt("cancel"),
             ]),
+            Mode::Renaming(_) => Line::from(vec![
+                key("↑↓"),
+                txt("history"),
+                sep(),
+                key("enter"),
+                txt("rename"),
+                sep(),
+                key("esc"),
+                txt("cancel"),
+            ]),
             Mode::Normal => match self.service.status() {
                 SessionStatus::Active { .. } => Line::from(vec![
                     key("space"),
@@ -592,6 +699,9 @@ impl<R: Repository> App<R> {
                     sep(),
                     key("enter"),
                     txt("new task"),
+                    sep(),
+                    key("r"),
+                    txt("rename"),
                     sep(),
                     key("s"),
                     txt("span"),
@@ -608,6 +718,9 @@ impl<R: Repository> App<R> {
                     sep(),
                     key("enter"),
                     txt("new task"),
+                    sep(),
+                    key("r"),
+                    txt("rename"),
                     sep(),
                     key("s"),
                     txt("span"),

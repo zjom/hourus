@@ -180,4 +180,88 @@ impl Repository for FileRepository {
 
         Ok(())
     }
+
+    fn rename_current(&mut self, new_desc: &str) -> Result<()> {
+        if let Some(entry) = self.entries.pop_if(|e| e.interval.end.is_none()) {
+            if let Some(path) = self.path.as_ref() {
+                let last_line =
+                    get_last_line(path)?.and_then(|s| EntryLine::from_str(s.as_ref()).ok());
+                if let Some(EntryLine {
+                    kind: EntryKind::Start,
+                    ..
+                }) = last_line
+                {
+                    delete_last_line(path)?;
+                }
+
+                let renamed_entry_line = EntryLine {
+                    desc: new_desc.to_string(),
+                    kind: EntryKind::Start,
+                    dt: entry.interval.start,
+                };
+                self.append_lines(&[renamed_entry_line])?;
+                self.entries.push(Entry {
+                    desc: new_desc.to_string(),
+                    ..entry
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn get_last_line(path: &PathBuf) -> io::Result<Option<String>> {
+    let file = fs::File::open(path)?;
+    let file_size = file.metadata()?.len();
+
+    if file_size == 0 {
+        return Ok(None);
+    }
+
+    let mut reader = BufReader::new(file);
+    let mut pos = file_size;
+    let mut last_line = String::new();
+
+    // Move backward from the end to find the last newline
+    while pos > 0 {
+        pos -= 1;
+        reader.seek(io::SeekFrom::Start(pos))?;
+        let mut buffer = [0; 1];
+        reader.read_exact(&mut buffer)?;
+
+        if buffer[0] == b'\n' && pos < file_size - 1 {
+            break;
+        }
+    }
+
+    // Read from the identified position to the end
+    reader.read_line(&mut last_line)?;
+    Ok(Some(last_line.trim_end().to_string()))
+}
+
+fn delete_last_line(path: &PathBuf) -> io::Result<()> {
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    let file_size = file.metadata()?.len();
+    if file_size == 0 {
+        return Ok(());
+    }
+
+    let mut pos = file_size - 1;
+    let mut buffer = [0; 1];
+
+    // Find the start of the last line
+    while pos > 0 {
+        pos -= 1;
+        file.seek(io::SeekFrom::Start(pos))?;
+        file.read_exact(&mut buffer)?;
+
+        if buffer[0] == b'\n' {
+            // We found the newline of the second-to-last line.
+            // We want to keep this newline, so we truncate at pos + 1.
+            pos += 1;
+            break;
+        }
+    }
+
+    Ok(file.set_len(pos)?)
 }

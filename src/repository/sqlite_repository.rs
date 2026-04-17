@@ -95,7 +95,10 @@ impl Repository for SqliteRepository {
 
         let mut stmt = self.conn.prepare(&query)?;
         let entries: Vec<Entry> = stmt
-            .query_map(rusqlite::params_from_iter(params), SqliteRepository::map_row_to_entry)?
+            .query_map(
+                rusqlite::params_from_iter(params),
+                SqliteRepository::map_row_to_entry,
+            )?
             .collect::<Result<_, _>>()?;
 
         Ok(entries)
@@ -134,5 +137,9 @@ impl Repository for SqliteRepository {
         )?;
 
         Ok(())
+    }
+
+    fn rename_current(&mut self, new_desc: &str) -> Result<()> {
+        todo!()
     }
 }

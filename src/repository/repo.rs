@@ -17,6 +17,8 @@ pub trait Repository {
     fn start_session(&mut self, desc: &str, dt: DateTime<Utc>) -> Result<()>;
 
     fn end_session(&mut self, dt: DateTime<Utc>) -> Result<()>;
+
+    fn rename_current(&mut self, new_desc: &str) -> Result<()>;
 }
 
 impl Repository for Box<dyn Repository> {
@@ -34,5 +36,9 @@ impl Repository for Box<dyn Repository> {
 
     fn end_session(&mut self, dt: chrono::DateTime<chrono::Utc>) -> anyhow::Result<()> {
         (**self).end_session(dt)
+    }
+
+    fn rename_current(&mut self, new_desc: &str) -> Result<()> {
+        (**self).rename_current(new_desc)
     }
 }
