@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::entry::Entry;
 use crate::error::StorageError;
 use anyhow::Result;
@@ -14,11 +16,11 @@ pub struct QueryOpts {
 pub trait Repository {
     fn list(&self, opts: QueryOpts) -> Result<Vec<Entry>, StorageError>;
 
-    fn start_session(&mut self, desc: &str, dt: DateTime<Utc>) -> Result<()>;
+    fn start_session(&mut self, desc: Arc<str>, dt: DateTime<Utc>) -> Result<()>;
 
     fn end_session(&mut self, dt: DateTime<Utc>) -> Result<()>;
 
-    fn rename_current(&mut self, new_desc: &str) -> Result<()>;
+    fn rename_current(&mut self, new_desc: Arc<str>) -> Result<()>;
 
     /// Flush any buffered output. Only meaningful for stdout-backed repositories
     /// where writes were deferred (e.g. while a TUI was active). Default is a no-op.
@@ -34,7 +36,7 @@ impl Repository for Box<dyn Repository> {
 
     fn start_session(
         &mut self,
-        desc: &str,
+        desc: Arc<str>,
         dt: chrono::DateTime<chrono::Utc>,
     ) -> anyhow::Result<()> {
         (**self).start_session(desc, dt)
@@ -44,7 +46,7 @@ impl Repository for Box<dyn Repository> {
         (**self).end_session(dt)
     }
 
-    fn rename_current(&mut self, new_desc: &str) -> Result<()> {
+    fn rename_current(&mut self, new_desc: Arc<str>) -> Result<()> {
         (**self).rename_current(new_desc)
     }
 

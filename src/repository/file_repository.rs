@@ -1,6 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::entry::{Entry, EntryKind, EntryLine, Interval};
 use crate::error::StorageError;
@@ -127,7 +128,7 @@ impl Repository for FileRepository {
             .collect())
     }
 
-    fn start_session(&mut self, desc: &str, dt: DateTime<Utc>) -> Result<()> {
+    fn start_session(&mut self, desc: Arc<str>, dt: DateTime<Utc>) -> Result<()> {
         let mut to_write: Vec<EntryLine> = Vec::with_capacity(2);
 
         // Auto-close any in-progress entry one second before the new start.
@@ -149,14 +150,14 @@ impl Repository for FileRepository {
 
         to_write.push(EntryLine {
             kind: EntryKind::Start,
-            desc: desc.to_owned(),
+            desc: desc.clone(),
             dt,
         });
 
         self.append_lines(&to_write)?;
 
         self.entries.push(Entry {
-            desc: desc.to_owned(),
+            desc: desc.clone(),
             interval: Interval {
                 start: dt,
                 end: None,
@@ -219,7 +220,7 @@ impl Repository for FileRepository {
         Ok(())
     }
 
-    fn rename_current(&mut self, new_desc: &str) -> Result<()> {
+    fn rename_current(&mut self, new_desc: Arc<str>) -> Result<()> {
         if let Some(entry) = self.entries.pop_if(|e| e.interval.end.is_none()) {
             if let Some(path) = self.path.as_ref() {
                 let last_line =
@@ -233,13 +234,13 @@ impl Repository for FileRepository {
                 }
 
                 self.append_lines(&[EntryLine {
-                    desc: new_desc.to_string(),
+                    desc: new_desc.clone(),
                     kind: EntryKind::Start,
                     dt: entry.interval.start,
                 }])?;
             }
             self.entries.push(Entry {
-                desc: new_desc.to_string(),
+                desc: new_desc.clone(),
                 ..entry
             });
         }

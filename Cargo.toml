@@ -11,7 +11,7 @@ crossterm = "0.29.0"
 itertools = "0.14.0"
 ratatui = "0.30.0"
 ratatui-textarea = "0.9.0"
-serde = {version = "1.0.228", features = ["derive"]}
+serde = {version = "1.0.228", features = ["derive", "rc"]}
 thiserror = "2.0.18"
 rusqlite = { version = "0.39.0", features = ["bundled", "chrono"], optional = true }
 

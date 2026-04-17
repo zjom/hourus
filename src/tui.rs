@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use ratatui_textarea::{CursorMove, TextArea};
+use std::sync::Arc;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ impl Timespan {
 struct PromptState {
     textarea: TextArea<'static>,
     /// The user's own typed text, captured the moment Up is first pressed.
-    saved_input: String,
+    saved_input: Arc<str>,
     /// Index into desc_history while navigating; `None` means the user's own
     /// input is shown.
     history_idx: Option<usize>,
@@ -118,7 +119,7 @@ struct App<R: Repository> {
     desc_history: StringHistoryList,
     /// Stable summary of completed sessions for the current window.
     /// Rebuilt on every state transition; never inside the render loop.
-    summary_cache: Vec<(String, TimeDelta)>,
+    summary_cache: Vec<(Arc<str>, TimeDelta)>,
     /// Total completed-session time since today's UTC midnight.
     base_duration_today: TimeDelta,
     exit: bool,
@@ -162,7 +163,7 @@ impl<R: Repository> App<R> {
     fn open_prompt(&self) -> Box<PromptState> {
         Box::new(PromptState {
             textarea: Self::make_textarea("", " new session "),
-            saved_input: String::new(),
+            saved_input: "".into(),
             history_idx: None,
             title: " new session ",
         })
@@ -200,20 +201,20 @@ impl<R: Repository> App<R> {
     // Session operations
     // -----------------------------------------------------------------------
 
-    fn start_session(&mut self, desc: &str, now: DateTime<Utc>) -> Result<()> {
+    fn start_session(&mut self, desc: Arc<str>, now: DateTime<Utc>) -> Result<()> {
         // Capture previous session's start time before mutating.
         let prev_started_at = match self.service.status() {
             SessionStatus::Active { started_at, .. } => Some(*started_at),
             _ => None,
         };
 
-        self.service.start(desc, now)?;
+        self.service.start(desc.clone(), now)?;
 
         if let Some(started_at) = prev_started_at {
             // start_session auto-closes the previous session at now - 1s.
             self.accrue(started_at, now - TimeDelta::seconds(1), now);
         }
-        self.desc_history.push_str(desc);
+        self.desc_history.push_str(&desc);
         self.rebuild_summary_cache();
         Ok(())
     }
@@ -258,7 +259,7 @@ impl<R: Repository> App<R> {
     // Aggregation helpers
     // -----------------------------------------------------------------------
 
-    fn summary_for_display(&self, now: DateTime<Utc>) -> Vec<(String, TimeDelta)> {
+    fn summary_for_display(&self, now: DateTime<Utc>) -> Vec<(Arc<str>, TimeDelta)> {
         let SessionStatus::Active { desc, started_at } = self.service.status() else {
             return self.summary_cache.clone();
         };
@@ -267,7 +268,7 @@ impl<R: Repository> App<R> {
         let running = (now - effective_start).max(TimeDelta::zero());
 
         let mut result = self.summary_cache.clone();
-        match result.iter_mut().find(|(d, _)| d.as_str() == desc.as_str()) {
+        match result.iter_mut().find(|(d, _)| d == desc) {
             Some(row) => row.1 += running,
             None => result.push((desc.clone(), running)),
         }
@@ -346,7 +347,7 @@ impl<R: Repository> App<R> {
                             .map(|l| l.trim().to_lowercase())
                             .unwrap_or_default();
                         if !desc.is_empty() {
-                            self.start_session(&desc, Utc::now())?;
+                            self.start_session(desc.into(), Utc::now())?;
                             // mode stays Normal
                         } else {
                             self.mode = Mode::Prompting(p);
@@ -358,8 +359,13 @@ impl<R: Repository> App<R> {
                             let history = &self.desc_history;
                             let next_idx = match p.history_idx {
                                 None if !history.is_empty() => {
-                                    p.saved_input =
-                                        p.textarea.lines().first().cloned().unwrap_or_default();
+                                    p.saved_input = p
+                                        .textarea
+                                        .lines()
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or_default()
+                                        .into();
                                     Some(0)
                                 }
                                 Some(i) if i + 1 < history.len() => Some(i + 1),
@@ -370,8 +376,7 @@ impl<R: Repository> App<R> {
                         };
                         if next_idx != p.history_idx {
                             p.history_idx = next_idx;
-                            p.textarea =
-                                Self::make_textarea(&content.unwrap_or_default(), p.title);
+                            p.textarea = Self::make_textarea(&content.unwrap_or_default(), p.title);
                         }
                         self.mode = Mode::Prompting(p);
                     }
@@ -425,8 +430,13 @@ impl<R: Repository> App<R> {
                             let history = &self.desc_history;
                             let next_idx = match p.history_idx {
                                 None if !history.is_empty() => {
-                                    p.saved_input =
-                                        p.textarea.lines().first().cloned().unwrap_or_default();
+                                    p.saved_input = p
+                                        .textarea
+                                        .lines()
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or_default()
+                                        .into();
                                     Some(0)
                                 }
                                 Some(i) if i + 1 < history.len() => Some(i + 1),
@@ -437,8 +447,7 @@ impl<R: Repository> App<R> {
                         };
                         if next_idx != p.history_idx {
                             p.history_idx = next_idx;
-                            p.textarea =
-                                Self::make_textarea(&content.unwrap_or_default(), p.title);
+                            p.textarea = Self::make_textarea(&content.unwrap_or_default(), p.title);
                         }
                         self.mode = Mode::Renaming(p);
                     }
@@ -490,7 +499,7 @@ impl<R: Repository> App<R> {
     }
 
     fn rename_session(&mut self, new_desc: &str) -> Result<()> {
-        self.service.rename(new_desc)?;
+        self.service.rename(new_desc.into())?;
         self.desc_history.push_str(new_desc);
         self.rebuild_summary_cache();
         Ok(())
@@ -541,7 +550,7 @@ impl<R: Repository> App<R> {
                 let local_start = started_at.with_timezone(&Local);
                 lines.push(Line::from(vec![
                     Span::styled("  ● ", Style::default().fg(Color::Green)),
-                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(desc.as_ref(), Style::default().add_modifier(Modifier::BOLD)),
                 ]));
                 lines.push(Line::from(vec![
                     Span::raw("    started "),
@@ -556,7 +565,7 @@ impl<R: Repository> App<R> {
             SessionStatus::Paused { desc } => {
                 lines.push(Line::from(vec![
                     Span::styled("  ⏸ ", Style::default().fg(Color::Yellow)),
-                    Span::styled(desc.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(desc.as_ref(), Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled("  (paused)", Style::default().fg(Color::DarkGray)),
                 ]));
                 lines.push(Line::from(Span::styled(
@@ -593,7 +602,7 @@ impl<R: Repository> App<R> {
         self.draw_summary(frame, summary_area, &summary);
     }
 
-    fn draw_summary(&self, frame: &mut Frame, area: Rect, summary: &[(String, TimeDelta)]) {
+    fn draw_summary(&self, frame: &mut Frame, area: Rect, summary: &[(Arc<str>, TimeDelta)]) {
         let mut lines: Vec<Line> = vec![];
 
         lines.push(Line::from(vec![
@@ -618,7 +627,7 @@ impl<R: Repository> App<R> {
                 let pad = col_width - desc.len();
                 lines.push(Line::from(vec![
                     Span::raw("  "),
-                    Span::raw(desc.clone()),
+                    Span::raw(desc.as_ref()),
                     Span::raw(" ".repeat(pad)),
                     Span::styled(format_duration(*dur), Style::default().fg(Color::Cyan)),
                 ]));
@@ -756,8 +765,8 @@ pub fn run<R: Repository>(
     mut service: SessionService<R>,
     initial_desc: Option<String>,
 ) -> Result<()> {
-    if let Some(ref desc) = initial_desc {
-        service.start(desc, Utc::now())?;
+    if let Some(desc) = initial_desc {
+        service.start(desc.into(), Utc::now())?;
     }
     let mut app = App::new(service)?;
     let mut terminal = ratatui::init();

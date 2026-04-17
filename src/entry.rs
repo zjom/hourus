@@ -1,7 +1,7 @@
 use crate::error::ParseError;
 use chrono::{DateTime, Local, NaiveDateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, sync::Arc};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum EntryKind {
@@ -32,7 +32,7 @@ impl FromStr for EntryKind {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct EntryLine {
     pub kind: EntryKind,
-    pub desc: String,
+    pub desc: Arc<str>,
     pub dt: DateTime<Utc>,
 }
 
@@ -62,9 +62,13 @@ impl FromStr for EntryLine {
         let dt = NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
             .or_else(|_| NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S"))?
             .and_utc();
-        let desc = data[2].trim().to_lowercase().to_owned();
+        let desc = data[2].trim().to_lowercase();
 
-        Ok(EntryLine { kind, desc, dt })
+        Ok(EntryLine {
+            kind,
+            desc: desc.into(),
+            dt,
+        })
     }
 }
 
@@ -82,7 +86,7 @@ impl Interval {
 
 #[derive(Debug, Clone)]
 pub struct Entry {
-    pub desc: String,
+    pub desc: Arc<str>,
     pub interval: Interval,
 }
 
@@ -99,7 +103,7 @@ impl Entry {
         }
 
         Ok(Entry {
-            desc: a.desc.to_owned(),
+            desc: a.desc.clone(),
             interval: Interval {
                 start: a.dt,
                 end: Some(b.dt),
@@ -125,7 +129,7 @@ mod tests {
     fn start_line() -> EntryLine {
         EntryLine {
             kind: EntryKind::Start,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: base_dt(),
         }
     }
@@ -133,7 +137,7 @@ mod tests {
     fn end_line() -> EntryLine {
         EntryLine {
             kind: EntryKind::End,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: parse_dt("2015-09-06 00:56:04"),
         }
     }
@@ -203,7 +207,7 @@ mod tests {
     fn entry_line_display_end_kind() {
         let e = EntryLine {
             kind: EntryKind::End,
-            desc: "task".to_string(),
+            desc: "task".into(),
             dt: base_dt(),
         };
         assert_eq!(format!("{}", e), "END - 2015-09-05 23:56:04 - task");
@@ -225,21 +229,21 @@ mod tests {
     fn entry_line_from_str_end_kind() {
         let e: EntryLine = "END - 2015-09-05 23:56:04 - desc".parse().unwrap();
         assert_eq!(e.kind, EntryKind::End);
-        assert_eq!(e.desc, "desc");
+        assert_eq!(e.desc, "desc".into());
         assert_eq!(e.dt, base_dt());
     }
 
     #[test]
     fn entry_line_from_str_desc_is_lowercased() {
         let e: EntryLine = "START - 2015-09-05 23:56:04 - My Task".parse().unwrap();
-        assert_eq!(e.desc, "my task");
+        assert_eq!(e.desc, "my task".into());
     }
 
     #[test]
     fn entry_line_from_str_desc_with_embedded_dashes_preserved() {
         // splitn(3) means only the first two separators split; the rest stays in desc
         let e: EntryLine = "START - 2015-09-05 23:56:04 - a - b - c".parse().unwrap();
-        assert_eq!(e.desc, "a - b - c");
+        assert_eq!(e.desc, "a - b - c".into());
     }
 
     #[test]
@@ -306,7 +310,7 @@ mod tests {
     #[test]
     fn entry_new_valid_pair() {
         let entry = Entry::new(&start_line(), &end_line()).unwrap();
-        assert_eq!(entry.desc, "desc");
+        assert_eq!(entry.desc, "desc".into());
         assert_eq!(entry.interval.start, base_dt());
         assert_eq!(entry.interval.end, Some(end_line().dt));
     }
@@ -331,7 +335,7 @@ mod tests {
     fn entry_new_desc_mismatch_returns_err() {
         let b = EntryLine {
             kind: EntryKind::End,
-            desc: "different".to_string(),
+            desc: "different".into(),
             dt: end_line().dt,
         };
         assert!(matches!(
@@ -344,12 +348,12 @@ mod tests {
     fn entry_new_end_time_before_start_time_returns_err() {
         let a = EntryLine {
             kind: EntryKind::Start,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: parse_dt("2024-01-01 10:00:00"),
         };
         let b = EntryLine {
             kind: EntryKind::End,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: parse_dt("2024-01-01 09:00:00"),
         };
         assert!(matches!(
@@ -363,12 +367,12 @@ mod tests {
         let d = parse_dt("2024-01-01 09:00:00");
         let a = EntryLine {
             kind: EntryKind::Start,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: d,
         };
         let b = EntryLine {
             kind: EntryKind::End,
-            desc: "desc".to_string(),
+            desc: "desc".into(),
             dt: d,
         };
         assert!(Entry::new(&a, &b).is_ok());

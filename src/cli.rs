@@ -127,7 +127,7 @@ pub fn run() -> Result<()> {
             format.write_breakdown(stdout, &summary, total)?;
         }
         Some(Commands::Interactive { desc }) => tui::run(service, desc.clone())?,
-        Some(Commands::Start { desc }) => service.start(desc, Utc::now())?,
+        Some(Commands::Start { desc }) => service.start(desc.as_str().into(), Utc::now())?,
         Some(Commands::End {}) => service.end(Utc::now())?,
         None => {
             let entries = service.list(QueryOpts {

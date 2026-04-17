@@ -1,6 +1,9 @@
 use chrono::TimeDelta;
 use clap::ValueEnum;
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    sync::Arc,
+};
 
 /// Supported presentation formats for report output.
 #[derive(Debug, Clone, Default, ValueEnum)]
@@ -21,11 +24,7 @@ impl OutputFormat {
     pub fn write_total(&self, w: &mut impl Write, total: TimeDelta) -> io::Result<()> {
         match self {
             OutputFormat::Pretty => writeln!(w, "{}", format_duration(total)),
-            OutputFormat::Json => writeln!(
-                w,
-                r#"{{"total_minutes":{}}}"#,
-                total.num_minutes()
-            ),
+            OutputFormat::Json => writeln!(w, r#"{{"total_minutes":{}}}"#, total.num_minutes()),
             OutputFormat::Csv => {
                 writeln!(w, "total_minutes")?;
                 writeln!(w, "{}", total.num_minutes())
@@ -41,7 +40,7 @@ impl OutputFormat {
     pub fn write_breakdown(
         &self,
         w: &mut impl Write,
-        summary: &[(String, TimeDelta)],
+        summary: &[(Arc<str>, TimeDelta)],
         total: TimeDelta,
     ) -> io::Result<()> {
         match self {
@@ -206,16 +205,13 @@ mod tests {
 
     // --- OutputFormat::write_breakdown ---
 
-    fn sample_summary() -> Vec<(String, TimeDelta)> {
-        vec![
-            ("coding".to_string(), mins(120)),
-            ("review".to_string(), mins(30)),
-        ]
+    fn sample_summary() -> Vec<(Arc<str>, TimeDelta)> {
+        vec![("coding".into(), mins(120)), ("review".into(), mins(30))]
     }
 
     fn capture_breakdown(
         fmt: &OutputFormat,
-        summary: &[(String, TimeDelta)],
+        summary: &[(Arc<str>, TimeDelta)],
         total: TimeDelta,
     ) -> String {
         let mut buf = Vec::new();

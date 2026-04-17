@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::entry::Entry;
 use crate::error::StorageError;
 use crate::repository::{QueryOpts, Repository};
@@ -12,11 +14,11 @@ use chrono::{DateTime, TimeDelta, Utc};
 pub enum SessionStatus {
     Idle,
     Active {
-        desc: String,
+        desc: Arc<str>,
         started_at: DateTime<Utc>,
     },
     Paused {
-        desc: String,
+        desc: Arc<str>,
     },
 }
 
@@ -56,10 +58,10 @@ impl<R: Repository> SessionService<R> {
     // -----------------------------------------------------------------------
 
     /// Start a new session with `desc`, auto-closing the current one if active.
-    pub fn start(&mut self, desc: &str, now: DateTime<Utc>) -> Result<()> {
-        self.repo.start_session(desc, now)?;
+    pub fn start(&mut self, desc: Arc<str>, now: DateTime<Utc>) -> Result<()> {
+        self.repo.start_session(desc.clone(), now)?;
         self.status = SessionStatus::Active {
-            desc: desc.to_owned(),
+            desc: desc.clone(),
             started_at: now,
         };
         Ok(())
@@ -81,10 +83,9 @@ impl<R: Repository> SessionService<R> {
         let SessionStatus::Paused { desc } = &self.status else {
             return Ok(());
         };
-        let desc = desc.clone();
-        self.repo.start_session(&desc, now)?;
+        self.repo.start_session(desc.clone(), now)?;
         self.status = SessionStatus::Active {
-            desc,
+            desc: desc.clone(),
             started_at: now,
         };
         Ok(())
@@ -108,12 +109,12 @@ impl<R: Repository> SessionService<R> {
     /// at the same instant with the new description.
     /// For a paused session only the in-memory label is updated; the
     /// already-written entry keeps its old description.
-    pub fn rename(&mut self, new_desc: &str) -> Result<()> {
+    pub fn rename(&mut self, new_desc: Arc<str>) -> Result<()> {
         match &self.status {
             SessionStatus::Active { started_at, .. } => {
-                self.repo.rename_current(new_desc)?;
+                self.repo.rename_current(new_desc.clone())?;
                 self.status = SessionStatus::Active {
-                    desc: new_desc.to_owned(),
+                    desc: new_desc.clone(),
                     started_at: *started_at,
                 };
             }
@@ -160,16 +161,15 @@ impl<R: Repository> SessionService<R> {
 // ---------------------------------------------------------------------------
 
 /// Aggregate completed entries by description, sorted by total duration desc.
-pub fn summarize(entries: &[Entry]) -> Vec<(String, TimeDelta)> {
+pub fn summarize(entries: &[Entry]) -> Vec<(Arc<str>, TimeDelta)> {
     use std::collections::HashMap;
-    let mut map: HashMap<&str, TimeDelta> = HashMap::new();
+    let mut map: HashMap<Arc<str>, TimeDelta> = HashMap::new();
     for e in entries {
         if e.interval.end.is_some() {
-            *map.entry(e.desc.as_str()).or_default() += e.interval.duration();
+            *map.entry(e.desc.clone()).or_default() += e.interval.duration();
         }
     }
-    let mut result: Vec<(String, TimeDelta)> =
-        map.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
+    let mut result: Vec<(Arc<str>, TimeDelta)> = map.into_iter().map(|(k, v)| (k, v)).collect();
     result.sort_by(|a, b| b.1.cmp(&a.1));
     result
 }
