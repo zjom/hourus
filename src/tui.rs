@@ -763,6 +763,7 @@ pub fn run<R: Repository>(
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
+    app.service.flush()?;
     result
 }
 

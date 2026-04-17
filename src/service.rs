@@ -147,6 +147,12 @@ impl<R: Repository> SessionService<R> {
     pub fn list(&self, opts: QueryOpts) -> Result<Vec<Entry>, StorageError> {
         self.repo.list(opts)
     }
+
+    /// Flush any buffered repository output (e.g. stdout writes deferred while
+    /// a TUI was active).
+    pub fn flush(&mut self) -> Result<()> {
+        self.repo.flush()
+    }
 }
 
 // ---------------------------------------------------------------------------

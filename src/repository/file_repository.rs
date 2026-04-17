@@ -19,6 +19,9 @@ use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 pub struct FileRepository {
     path: Option<PathBuf>,
     entries: Vec<Entry>,
+    /// Number of entries present at load time. Used by `flush` to know which
+    /// entries are new and need to be written to stdout when path is None.
+    initial_entry_count: usize,
 }
 
 impl FileRepository {
@@ -35,9 +38,12 @@ impl FileRepository {
             None => Box::new(io::stdin()),
         };
 
+        let entries = FileRepository::load(reader)?;
+        let initial_entry_count = entries.len();
         Ok(FileRepository {
             path,
-            entries: FileRepository::load(reader)?,
+            entries,
+            initial_entry_count,
         })
     }
 
@@ -95,7 +101,9 @@ impl FileRepository {
                 }
                 Box::new(fs::OpenOptions::new().append(true).open(path)?)
             }
-            None => Box::new(io::stdout()),
+            // When path is None the writes are deferred to `flush` so they
+            // don't corrupt the TUI while it is rendering to the same terminal.
+            None => return Ok(()),
         };
         for line in lines {
             writeln!(writer, "{line}")?;
@@ -181,6 +189,36 @@ impl Repository for FileRepository {
         Ok(())
     }
 
+    fn flush(&mut self) -> Result<()> {
+        if self.path.is_some() {
+            return Ok(());
+        }
+        let mut stdout = io::stdout();
+        for entry in &self.entries[self.initial_entry_count..] {
+            writeln!(
+                stdout,
+                "{}",
+                EntryLine {
+                    kind: EntryKind::Start,
+                    desc: entry.desc.clone(),
+                    dt: entry.interval.start,
+                }
+            )?;
+            if let Some(end) = entry.interval.end {
+                writeln!(
+                    stdout,
+                    "{}",
+                    EntryLine {
+                        kind: EntryKind::End,
+                        desc: entry.desc.clone(),
+                        dt: end,
+                    }
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn rename_current(&mut self, new_desc: &str) -> Result<()> {
         if let Some(entry) = self.entries.pop_if(|e| e.interval.end.is_none()) {
             if let Some(path) = self.path.as_ref() {
@@ -194,17 +232,16 @@ impl Repository for FileRepository {
                     delete_last_line(path)?;
                 }
 
-                let renamed_entry_line = EntryLine {
+                self.append_lines(&[EntryLine {
                     desc: new_desc.to_string(),
                     kind: EntryKind::Start,
                     dt: entry.interval.start,
-                };
-                self.append_lines(&[renamed_entry_line])?;
-                self.entries.push(Entry {
-                    desc: new_desc.to_string(),
-                    ..entry
-                });
+                }])?;
             }
+            self.entries.push(Entry {
+                desc: new_desc.to_string(),
+                ..entry
+            });
         }
         Ok(())
     }

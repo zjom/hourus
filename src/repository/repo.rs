@@ -19,6 +19,12 @@ pub trait Repository {
     fn end_session(&mut self, dt: DateTime<Utc>) -> Result<()>;
 
     fn rename_current(&mut self, new_desc: &str) -> Result<()>;
+
+    /// Flush any buffered output. Only meaningful for stdout-backed repositories
+    /// where writes were deferred (e.g. while a TUI was active). Default is a no-op.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl Repository for Box<dyn Repository> {
@@ -40,5 +46,9 @@ impl Repository for Box<dyn Repository> {
 
     fn rename_current(&mut self, new_desc: &str) -> Result<()> {
         (**self).rename_current(new_desc)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
     }
 }
