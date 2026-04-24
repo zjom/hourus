@@ -1,6 +1,10 @@
 [package]
 name = "hourus"
 version = "0.1.0"
+authors = ["zjom"]
+readme = "README.md"
+license = "unlicense"
+license-file = "LICENSE"
 edition = "2024"
 
 [dependencies]
