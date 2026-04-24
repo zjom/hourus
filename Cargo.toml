@@ -1,5 +1,6 @@
 [package]
 name = "hourus"
+description = "tui time tracking tool"
 version = "0.1.0"
 authors = ["zjom"]
 readme = "README.md"
