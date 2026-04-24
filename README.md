@@ -88,14 +88,8 @@ END - 2025-01-15T14:15:00 - code review
 
 Requires Rust 1.92+.
 
-Hourus has not been released on crates.io. 
-
-To install you must first clone the repo and then run `cargo install`.
-i.e.,
-
 ```sh
-git clone github.com/zjom/hourus.git --head ./hourus
-cargo install --path ./hourus
+cargo install hourus
 ```
 
 ## Development
